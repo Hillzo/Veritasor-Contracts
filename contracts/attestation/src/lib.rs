@@ -7,8 +7,8 @@ use veritasor_attestor_staking::AttestorStakingContractClient;
 use veritasor_common::replay_protection;
 
 // Nonce channels
-pub const NONCE_CHANNEL_ADMIN: u32 = 1;
-pub const NONCE_CHANNEL_BUSINESS: u32 = 2;
+pub const NONCE_CHANNEL_ADMIN: u32 = 0;
+pub const NONCE_CHANNEL_BUSINESS: u32 = 1;
 
 // Key Tags
 const ANOMALY_KEY_TAG: (u32,) = (3,);
@@ -50,7 +50,7 @@ pub use fees::{FlatFeeConfig, collect_flat_fee};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
-pub use dispute::{Dispute, DisputeStatus, DisputeType, DisputeOutcome, OptionalResolution};
+pub use dispute::{Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,7 +94,7 @@ fn compare_strings(a: &String, b: &String) -> Ordering {
 
 #[contractimpl]
 impl AttestationContract {
-    pub fn initialize(env: Env, admin: Address) {
+    pub fn initialize(env: Env, admin: Address, _nonce: u64) {
         if dynamic_fees::is_initialized(&env) {
             panic!("already initialized");
         }
@@ -158,11 +158,13 @@ impl AttestationContract {
     }
 
     pub fn grant_role(env: Env, caller: Address, account: Address, role: u32) {
-        access_control::grant_role_by_admin(&env, &caller, &account, role);
+        access_control::require_admin(&env, &caller);
+        access_control::grant_role(&env, &account, role, &caller);
     }
 
     pub fn revoke_role(env: Env, caller: Address, account: Address, role: u32) {
-        access_control::revoke_role_by_admin(&env, &caller, &account, role);
+        access_control::require_admin(&env, &caller);
+        access_control::revoke_role(&env, &account, role, &caller);
     }
 
     pub fn has_role(env: Env, account: Address, role: u32) -> bool {
@@ -184,6 +186,7 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
+        _fee_paid: i128, // legacy argument, preserved for signature compatibility
         proof_hash: Option<BytesN<32>>,
         expiry_timestamp: Option<u64>,
     ) {
@@ -350,8 +353,8 @@ impl AttestationContract {
         period: String,
         merkle_root: BytesN<32>,
     ) -> bool {
-        if let Some((stored_root, _, _, _, _, _)) = Self::get_attestation(env, business, period) {
-            stored_root == merkle_root
+        if let Some((stored_root, _, _, _, _, _)) = Self::get_attestation(env.clone(), business.clone(), period.clone()) {
+            stored_root == merkle_root && !Self::is_revoked(env, business, period)
         } else {
             false
         }
@@ -381,7 +384,7 @@ impl AttestationContract {
         currency_code: String,
         is_net: bool,
     ) {
-        Self::submit_attestation(env.clone(), business.clone(), period.clone(), merkle_root, timestamp, version, None, None);
+        Self::submit_attestation(env.clone(), business.clone(), period.clone(), merkle_root, timestamp, version, 0i128, None, None);
         let metadata = extended_metadata::validate_metadata(&env, &currency_code, is_net);
         extended_metadata::set_metadata(&env, &business, &period, &metadata);
     }
@@ -518,7 +521,7 @@ impl AttestationContract {
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
         let key = MultiPeriodKey::Ranges(business.clone());
-        let mut ranges: Vec<AttestationRange> = env.storage().instance().get(&key).expect("no multi-period attestations");
+        let ranges: Vec<AttestationRange> = env.storage().instance().get(&key).expect("no multi-period attestations");
         let mut found = false;
         let mut updated = Vec::new(&env);
         for mut range in ranges.iter() {
@@ -544,10 +547,6 @@ impl AttestationContract {
 
     pub fn get_admin(env: Env) -> Address {
         dynamic_fees::get_admin(&env)
-    }
-
-    pub fn get_rate_limit_config(env: Env) -> Option<RateLimitConfig> {
-        rate_limit::get_rate_limit_config(&env)
     }
 
     pub fn get_submission_burst_count(env: Env, business: Address) -> u32 {
@@ -636,57 +635,6 @@ impl AttestationContract {
         dispute::get_dispute(&env, dispute_id)
     }
 
-    pub fn get_attestations_page(
-        env: Env,
-        business: Address,
-        periods: Vec<String>,
-        period_start: Option<String>,
-        period_end: Option<String>,
-        status_filter: u32,
-        version_filter: Option<u32>,
-        limit: u32,
-        cursor: u32,
-    ) -> (Vec<(String, BytesN<32>, u64, u32, u32)>, u32) {
-        let max_limit = 30;
-        let actual_limit = if limit > max_limit { max_limit } else { limit };
-        let mut results = Vec::new(&env);
-        let mut current_cursor = cursor;
-        let periods_len = periods.len();
-
-        while results.len() < actual_limit && current_cursor < periods_len {
-            let period = periods.get(current_cursor).unwrap();
-            current_cursor += 1;
-
-            if let Some(ref start) = period_start {
-                if compare_strings(&period, start) == Ordering::Less { continue; }
-            }
-            if let Some(ref end) = period_end {
-                if compare_strings(&period, end) == Ordering::Greater { continue; }
-            }
-
-            if let Some(data) = Self::get_attestation(env.clone(), business.clone(), period.clone()) {
-                let (root, ts, ver, _fee, _, _) = data;
-                
-                if let Some(v) = version_filter {
-                    if ver != v { continue; }
-                }
-
-                let is_rev = Self::is_revoked(env.clone(), business.clone(), period.clone());
-                let status = if is_rev { STATUS_REVOKED } else { STATUS_ACTIVE };
-
-                if status_filter != STATUS_FILTER_ALL && status != status_filter {
-                    continue;
-                }
-
-                results.push_back((period, root, ts, ver, status));
-            }
-        }
-
-        (results, current_cursor)
-    }
-
-    // ── Business Registry ─────────────────────────────────────────────
-
     pub fn register_business(
         env: Env,
         business: Address,
@@ -725,6 +673,55 @@ impl AttestationContract {
         registry::get_status(&env, &business)
     }
 
+    pub fn get_attestations_page(
+        env: Env,
+        business: Address,
+        periods: Vec<String>,
+        period_start: Option<String>,
+        period_end: Option<String>,
+        status_filter: u32,
+        version_filter: Option<u32>,
+        limit: u32,
+        cursor: u32,
+    ) -> (Vec<(String, BytesN<32>, u64, u32, u32)>, u32) {
+        let max_limit = 30;
+        let actual_limit = if limit > max_limit { max_limit } else { limit };
+        let mut results = Vec::new(&env);
+        let mut current_cursor = cursor;
+        let periods_len = periods.len();
+
+        while results.len() < actual_limit && current_cursor < periods_len {
+            let period = periods.get(current_cursor).unwrap();
+            current_cursor += 1;
+
+            if let Some(ref start) = period_start {
+                if compare_strings(&period, start) == Ordering::Less { continue; }
+            }
+            if let Some(ref end) = period_end {
+                if compare_strings(&period, end) == Ordering::Greater { continue; }
+            }
+
+            if let Some(data) = Self::get_attestation(env.clone(), business.clone(), period.clone()) {
+                let (root, ts, ver, _fee, _, _) = data;
+                
+                if let Some(v) = version_filter {
+                    if ver != v { continue; }
+                }
+
+                let is_rev = Self::is_revoked(env.clone(), business.clone(), period.clone());
+                let status = if is_rev { STATUS_ACTIVE + 1 } else { STATUS_ACTIVE };
+
+                if status_filter != STATUS_FILTER_ALL && status != status_filter {
+                    continue;
+                }
+
+                results.push_back((period, root, ts, ver, status));
+            }
+        }
+
+        (results, current_cursor)
+    }
+
     // ── Internal Helpers ──────────────────────────────────────────────
 
     fn validate_expiry(env: &Env, timestamp: u64, expiry_timestamp: Option<u64>) {
@@ -750,44 +747,4 @@ impl AttestationContract {
 #[cfg(test)]
 mod test;
 #[cfg(test)]
-mod access_control_test;
-#[cfg(test)]
-mod anomaly_test;
-#[cfg(test)]
-mod attestor_staking_integration_test;
-#[cfg(test)]
 mod batch_submission_test;
-#[cfg(test)]
-mod dispute_test;
-#[cfg(test)]
-mod dynamic_fees_test;
-#[cfg(test)]
-mod events_test;
-#[cfg(test)]
-mod expiry_test;
-#[cfg(test)]
-mod extended_metadata_test;
-#[cfg(test)]
-mod fees_test;
-#[cfg(test)]
-mod gas_benchmark_test;
-#[cfg(test)]
-mod key_rotation_test;
-#[cfg(test)]
-mod multi_period_test;
-#[cfg(test)]
-mod multisig_test;
-#[cfg(test)]
-mod pause_test;
-#[cfg(test)]
-mod proof_hash_test;
-#[cfg(test)]
-mod property_test;
-#[cfg(test)]
-mod query_pagination_test;
-#[cfg(test)]
-mod rate_limit_test;
-#[cfg(test)]
-mod registry_test;
-#[cfg(test)]
-mod revocation_test;

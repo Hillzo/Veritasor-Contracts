@@ -9,6 +9,6 @@ fn test_initialize() {
     let contract_id = env.register(AttestationContract, ());
     let client = AttestationContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin);
+    client.initialize(&admin, &0u64);
     assert_eq!(client.get_admin(), admin);
 }
