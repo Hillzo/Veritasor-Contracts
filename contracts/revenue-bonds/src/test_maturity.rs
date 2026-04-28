@@ -240,3 +240,246 @@ fn test_remaining_value_matured_is_zero() {
     client.mark_matured(&admin, &bond_id);
     assert_eq!(client.get_remaining_value(&bond_id), 0);
 }
+
+// ════════════════════════════════════════════════════════════════════
+//  Maturity Transitions and Final Accounting Tests (Issue #224)
+// ════════════════════════════════════════════════════════════════════
+
+#[test]
+fn test_matured_bond_cannot_redeem() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::Fixed,
+        &0, &100_000, &100_000, &1,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    client.mark_matured(&admin, &bond_id);
+
+    set_mock_revenue(&env, &issuer, "2026-01", 0);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.redeem(&bond_id, &String::from_str(&env, "2026-01"));
+    }));
+    assert!(result.is_err(), "matured bond cannot be redeemed");
+}
+
+#[test]
+fn test_matured_status_correct_for_fixed_structure() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::Fixed,
+        &0, &100_000, &100_000, &6,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    let before = client.get_bond(&bond_id).unwrap();
+    assert_eq!(before.status, BondStatus::Active);
+
+    client.mark_matured(&admin, &bond_id);
+
+    let after = client.get_bond(&bond_id).unwrap();
+    assert_eq!(after.status, BondStatus::Matured);
+}
+
+#[test]
+fn test_matured_status_correct_for_revenue_linked() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::RevenueLinked,
+        &500, &50_000, &200_000, &6,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    client.mark_matured(&admin, &bond_id);
+
+    let bond = client.get_bond(&bond_id).unwrap();
+    assert_eq!(bond.status, BondStatus::Matured);
+}
+
+#[test]
+fn test_matured_status_correct_for_hybrid() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::Hybrid,
+        &500, &50_000, &200_000, &12,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    client.mark_matured(&admin, &bond_id);
+
+    let bond = client.get_bond(&bond_id).unwrap();
+    assert_eq!(bond.status, BondStatus::Matured);
+}
+
+#[test]
+fn test_redeem_prevents_replay_after_maturity() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::Fixed,
+        &0, &500_000, &500_000, &3,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    // First redemption within maturity
+    set_mock_revenue(&env, &issuer, "2026-01", 0);
+    client.redeem(&bond_id, &String::from_str(&env, "2026-01"));
+    set_mock_revenue(&env, &issuer, "2026-02", 0);
+    client.redeem(&bond_id, &String::from_str(&env, "2026-02"));
+
+    // Mark as matured
+    client.mark_matured(&admin, &bond_id);
+
+    // Cannot redeem beyond maturity
+    set_mock_revenue(&env, &issuer, "2026-03", 0);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        client.redeem(&bond_id, &String::from_str(&env, "2026-03"));
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_final_redemption_accounting_correct() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let face_value = 500_000i128;
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &face_value, &BondStructure::Fixed,
+        &0, &200_000, &200_000, &3,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    // Redeem all periods
+    for period in &["2026-01", "2026-02", "2026-03"] {
+        set_mock_revenue(&env, &issuer, period, 0);
+        client.redeem(&bond_id, &String::from_str(&env, period));
+    }
+
+    let total_redeemed = client.get_total_redeemed(&bond_id);
+    let remaining = client.get_remaining_value(&bond_id);
+
+    assert_eq!(total_redeemed, face_value);
+    assert_eq!(remaining, 0);
+
+    let bond = client.get_bond(&bond_id).unwrap();
+    assert_eq!(bond.status, BondStatus::FullyRedeemed);
+}
+
+#[test]
+fn test_early_redemption_allowed() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::Fixed,
+        &0, &100_000, &100_000, &12,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    // Can redeem before maturity
+    set_mock_revenue(&env, &issuer, "2026-01", 0);
+    client.redeem(&bond_id, &String::from_str(&env, "2026-01"));
+
+    let record = client.get_redemption(&bond_id, &String::from_str(&env, "2026-01"));
+    assert!(record.is_some());
+}
+
+#[test]
+fn test_hybrid_schedule_correct_boundary() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &1_000_000, &BondStructure::Hybrid,
+        &500, &25_000, &200_000, &2,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    // First period - within maturity
+    set_mock_revenue(&env, &issuer, "2026-01", 100_000);
+    client.redeem(&bond_id, &String::from_str(&env, "2026-01"));
+
+    // Last period - within maturity
+    set_mock_revenue(&env, &issuer, "2026-02", 100_000);
+    client.redeem(&bond_id, &String::from_str(&env, "2026-02"));
+
+    // After maturity - rejected
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        set_mock_revenue(&env, &issuer, "2026-03", 100_000);
+        client.redeem(&bond_id, &String::from_str(&env, "2026-03"));
+    }));
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_fully_redeemed_vs_matured_distinct() {
+    let (env, admin, issuer, owner, token, attestation_contract) = setup_test();
+    let contract_id = env.register(RevenueBondContract, ());
+    let client = RevenueBondContractClient::new(&env, &contract_id);
+    client.initialize(&admin);
+
+    let bond_id = client.issue_bond(
+        &issuer, &owner, &100_000, &BondStructure::Fixed,
+        &0, &100_000, &100_000, &2,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+
+    // Fully redeem
+    for period in &["2026-01", "2026-02"] {
+        set_mock_revenue(&env, &issuer, period, 0);
+        client.redeem(&bond_id, &String::from_str(&env, period));
+    }
+
+    let bond_fully = client.get_bond(&bond_id).unwrap();
+    assert_eq!(bond_fully.status, BondStatus::FullyRedeemed);
+    
+    // Issue another bond and mature it
+    let bond_id2 = client.issue_bond(
+        &issuer, &owner, &100_000, &BondStructure::Fixed,
+        &0, &100_000, &100_000, &2,
+        &String::from_str(&env, "2026-01"),
+        &attestation_contract, &token,
+    );
+    
+    client.mark_matured(&admin, &bond_id2);
+    let bond_matured = client.get_bond(&bond_id2).unwrap();
+    assert_eq!(bond_matured.status, BondStatus::Matured);
+    
+    // These should be distinct states
+    assert_ne!(bond_fully.status, bond_matured.status);
+}
