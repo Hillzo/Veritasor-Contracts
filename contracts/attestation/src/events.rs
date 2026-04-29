@@ -40,6 +40,26 @@
 //! | `BusinessSuspended`         | `biz_sus`      | `business`        |
 //! | `BusinessReactivated`       | `biz_rea`      | `business`        |
 //!
+//! ## Indexer Compatibility Contract
+//!
+//! The attestation lifecycle events in this module (`att_sub`, `att_rev`,
+//! `att_mig`) are a stable wire contract for off-chain indexers.
+//!
+//! Compatibility rules:
+//! - Topic symbols are stable identifiers and MUST NOT be repurposed.
+//! - Field order inside `#[contracttype]` structs is stable.
+//! - Backwards-compatible additions are append-only optional fields.
+//! - Removing, renaming, reordering, or changing field types is breaking.
+//!
+//! Breaking-change policy:
+//! - Increment `EVENT_SCHEMA_VERSION` for any breaking event-schema change.
+//! - Update indexer-facing documentation in `docs/attestation-events-indexer.md`.
+//! - Preserve old historical events; never rewrite or reinterpret ledger history.
+//!
+//! Duplicate-handling note for indexers:
+//! - Failed submissions/migrations do not emit attestation lifecycle events.
+//! - Replays are prevented via nonce checks at contract entrypoints.
+//!
 //! ## Security Notes
 //!
 //! - Only contract-internal logic calls these functions; no external caller can
@@ -59,6 +79,9 @@ use soroban_sdk::{contracttype, symbol_short, Address, BytesN, Env, String, Symb
 /// Increment this constant whenever a breaking field change is made to *any*
 /// event struct in this module so that off-chain indexers can detect and
 /// handle schema changes.
+///
+/// Non-breaking changes (for example, appending new optional fields at the
+/// end of a struct) MUST NOT increment this version.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
 
 // ════════════════════════════════════════════════════════════════════
@@ -81,6 +104,8 @@ pub const TOPIC_PAUSED: Symbol = symbol_short!("paused");
 pub const TOPIC_UNPAUSED: Symbol = symbol_short!("unpaus");
 /// Topic: fee configuration updated
 pub const TOPIC_FEE_CONFIG: Symbol = symbol_short!("fee_cfg");
+/// Topic: flat fee configuration updated
+pub const TOPIC_FLAT_FEE_CONFIG: Symbol = symbol_short!("ff_cfg");
 /// Topic: rate-limit configuration updated
 pub const TOPIC_RATE_LIMIT: Symbol = symbol_short!("rate_lm");
 /// Topic: key rotation proposed (time-locked)
@@ -118,6 +143,9 @@ pub const TOPIC_BIZ_REACTIVATE: Symbol = symbol_short!("biz_rea");
 /// Emitted once per successful `submit_attestation` call.  The
 /// `proof_hash` and `expiry_timestamp` fields are optional and will
 /// be `None` when the submitter did not provide them.
+///
+/// This struct is an indexer-facing wire contract; field order and types are
+/// part of compatibility guarantees.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct AttestationSubmittedEvent {
@@ -143,6 +171,9 @@ pub struct AttestationSubmittedEvent {
 ///
 /// Emitted once per successful `revoke_attestation` call.  The
 /// `reason` field is a free-form string supplied by the revoker.
+///
+/// This struct is an indexer-facing wire contract; field order and types are
+/// part of compatibility guarantees.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct AttestationRevokedEvent {
@@ -160,6 +191,9 @@ pub struct AttestationRevokedEvent {
 ///
 /// Contains both old and new values so indexers can reconstruct the
 /// full audit trail without additional storage reads.
+///
+/// This struct is an indexer-facing wire contract; field order and types are
+/// part of compatibility guarantees.
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct AttestationMigratedEvent {
@@ -219,6 +253,22 @@ pub struct FeeConfigChangedEvent {
     /// Base fee amount in token smallest units.
     pub base_fee: i128,
     /// Whether fee collection is currently enabled.
+    pub enabled: bool,
+    /// Address that made the configuration change.
+    pub changed_by: Address,
+}
+
+/// Normalized payload for `FlatFeeConfigChanged` events.
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct FlatFeeConfigChangedEvent {
+    /// Token contract used for fee collection.
+    pub token: Address,
+    /// Destination address that receives fees.
+    pub collector: Address,
+    /// Flat fee amount in token smallest units.
+    pub amount: i128,
+    /// Whether flat fee collection is currently enabled.
     pub enabled: bool,
     /// Address that made the configuration change.
     pub changed_by: Address,
@@ -602,19 +652,6 @@ pub fn emit_unpaused(env: &Env, changed_by: &Address) {
 // ── Fee configuration ─────────────────────────────────────────────
 
 /// Emit a `FeeConfigChanged` event.
-///
-/// # Arguments
-///
-/// * `env`        – Soroban execution environment.
-/// * `token`      – Token contract address for fee collection.
-/// * `collector`  – Address that receives fees.
-/// * `base_fee`   – Base fee in token smallest units.
-/// * `enabled`    – Whether fee collection is now enabled.
-/// * `changed_by` – Address that made the change.
-///
-/// # Events
-///
-/// Publishes `(fee_cfg,)` → `FeeConfigChangedEvent`.
 pub fn emit_fee_config_changed(
     env: &Env,
     token: &Address,
@@ -631,6 +668,25 @@ pub fn emit_fee_config_changed(
         changed_by: changed_by.clone(),
     };
     env.events().publish((TOPIC_FEE_CONFIG,), event);
+}
+
+/// Emit a `FlatFeeConfigChanged` event.
+pub fn emit_flat_fee_config_changed(
+    env: &Env,
+    token: &Address,
+    collector: &Address,
+    amount: i128,
+    enabled: bool,
+    changed_by: &Address,
+) {
+    let event = FlatFeeConfigChangedEvent {
+        token: token.clone(),
+        collector: collector.clone(),
+        amount,
+        enabled,
+        changed_by: changed_by.clone(),
+    };
+    env.events().publish((TOPIC_FLAT_FEE_CONFIG,), event);
 }
 
 // ── Rate limiting ─────────────────────────────────────────────────

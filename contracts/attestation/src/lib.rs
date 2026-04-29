@@ -139,7 +139,7 @@ impl AttestationContract {
     pub fn configure_flat_fee(
         env: Env,
         token: Address,
-        treasury: Address,
+        collector: Address,
         amount: i128,
         enabled: bool,
     ) {
@@ -205,7 +205,7 @@ impl AttestationContract {
 
         dynamic_fees::increment_business_count(&env, &business);
 
-        let data: AttestationData = (
+        let data = (
             merkle_root.clone(),
             timestamp,
             version,
@@ -308,12 +308,20 @@ impl AttestationContract {
         if let Some(data) = Self::get_attestation(env.clone(), business, period) {
             return Self::attestation_expired(&env, &data);
         }
-        false
-    }
 
-    pub fn is_revoked(env: Env, business: Address, period: String) -> bool {
-        dispute::is_attestation_revoked(&env, &business, &period)
-    }
+        // Security: Commitment enforcement
+        if let Some(ref provided_hash) = proof_hash {
+            let expected_hash = Self::compute_commitment(
+                env.clone(),
+                business.clone(),
+                period.clone(),
+                merkle_root.clone(),
+                version,
+            );
+            if provided_hash != &expected_hash {
+                panic!("proof_hash does not match canonical commitment");
+            }
+        }
 
     pub fn get_revocation_info(
         env: Env,
@@ -344,7 +352,6 @@ impl AttestationContract {
             let revocation = Self::get_revocation_info(env.clone(), business.clone(), period.clone());
             results.push_back((period, attestation, revocation));
         }
-        results
     }
 
     pub fn verify_attestation(
@@ -358,20 +365,18 @@ impl AttestationContract {
         } else {
             false
         }
+        Self::submit_attestations_batch(env, items);
     }
 
-    pub fn revoke_attestation(
+    pub fn migrate_attestation(
         env: Env,
-        caller: Address,
+        admin: Address,
         business: Address,
         period: String,
         reason: String,
     ) {
-        dispute::require_revocation_authorized(&env, &caller, &business, &period);
-        let revoked_at = env.ledger().timestamp();
-        let revocation = (caller.clone(), revoked_at, reason.clone());
-        dispute::store_attestation_revocation(&env, &business, &period, &revocation);
-        events::emit_attestation_revoked(&env, &business, &period, &caller, &reason);
+        // TODO: implement migration logic
+        unimplemented!("migrate_attestation not implemented");
     }
 
     pub fn submit_attestation_with_metadata(
@@ -409,6 +414,8 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
         timestamp: u64,
         version: u32,
+        proof_hash: Option<BytesN<32>>,
+        expiry_timestamp: Option<u64>,
     ) {
         business.require_auth();
         if start_period > end_period {

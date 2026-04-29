@@ -300,6 +300,13 @@ mod storage {
         env.storage().instance().get(&DataKey::NetworkConfig(network_id))
     }
 
+    /// Returns `true` when `network_id` has been registered and not yet removed.
+    pub fn is_registered_network(env: &Env, network_id: NetworkId) -> bool {
+        env.storage()
+            .instance()
+            .has(&DataKey::NetworkConfig(network_id))
+    }
+
     pub fn get_registered_networks(env: &Env) -> Vec<NetworkId> {
         env.storage().instance().get(&DataKey::RegisteredNetworks).unwrap_or(Vec::new(env))
     }
