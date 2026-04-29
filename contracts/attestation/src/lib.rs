@@ -120,6 +120,73 @@ impl AttestationContract {
         dynamic_fees::set_fee_config(&env, &config);
     }
 
+    // ── Rate Limiting ─────────────────────────────────────────────────────────
+
+    /// Configure per-business rate limiting.
+    ///
+    /// Admin-only. Validates all parameters before persisting. Emits a
+    /// `RateLimitConfigChanged` event on success.
+    ///
+    /// # Parameters
+    ///
+    /// * `max_submissions`       – Max attestations per full window `[1, 100]`.
+    /// * `window_seconds`        – Full window duration in seconds `[1, 31_536_000]`.
+    /// * `burst_max_submissions` – Max attestations per burst window `[1, max_submissions]`.
+    /// * `burst_window_seconds`  – Burst window duration in seconds `[1, window_seconds]`.
+    /// * `enabled`               – Master switch; `false` disables rate limiting.
+    /// * `nonce`                 – Replay-protection nonce for the admin channel.
+    pub fn configure_rate_limit(
+        env: Env,
+        max_submissions: u32,
+        window_seconds: u64,
+        burst_max_submissions: u32,
+        burst_window_seconds: u64,
+        enabled: bool,
+        nonce: u64,
+    ) {
+        let admin = dynamic_fees::get_admin(&env);
+        admin.require_auth();
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
+
+        let config = rate_limit::RateLimitConfig {
+            max_submissions,
+            window_seconds,
+            burst_max_submissions,
+            burst_window_seconds,
+            enabled,
+        };
+        rate_limit::set_rate_limit_config(&env, &config);
+
+        events::emit_rate_limit_config_changed(
+            &env,
+            max_submissions,
+            window_seconds,
+            burst_max_submissions,
+            burst_window_seconds,
+            enabled,
+            &admin,
+        );
+    }
+
+    /// Return the current rate limit configuration, or `None` if not set.
+    pub fn get_rate_limit_config(env: Env) -> Option<RateLimitConfig> {
+        rate_limit::get_rate_limit_config(&env)
+    }
+
+    /// Return how many submissions `business` has in the current full window.
+    ///
+    /// Returns `0` when rate limiting is not configured or is disabled.
+    pub fn get_submission_window_count(env: Env, business: Address) -> u32 {
+        rate_limit::get_submission_count(&env, &business)
+    }
+
+    /// Return how many submissions `business` has in the current burst window.
+    ///
+    /// Returns `0` when rate limiting is not configured or is disabled.
+    pub fn get_submission_burst_count(env: Env, business: Address) -> u32 {
+        rate_limit::get_burst_submission_count(&env, &business)
+    }
+
     pub fn configure_flat_fee(
         env: Env,
         token: Address,
