@@ -7,8 +7,10 @@
 
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Vec, Symbol, Val, TryFromVal};
-
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Bytes, Env, String, Symbol,
+    TryFromVal, Val, Vec,
+};
 
 /// Unique identifier for a Stellar network
 pub type NetworkId = u32;
@@ -125,23 +127,28 @@ mod events {
     use super::*;
 
     pub fn emit_initialized(env: &Env, admin: &Address) {
-        env.events().publish((symbol_short!("init"),), admin.clone());
+        env.events()
+            .publish((symbol_short!("init"),), admin.clone());
     }
 
     pub fn emit_network_set(env: &Env, network_id: NetworkId, name: &String) {
-        env.events().publish((symbol_short!("net_set"), network_id), name.clone());
+        env.events()
+            .publish((symbol_short!("net_set"), network_id), name.clone());
     }
 
     pub fn emit_network_active(env: &Env, network_id: NetworkId, active: bool) {
-        env.events().publish((symbol_short!("net_act"), network_id), active);
+        env.events()
+            .publish((symbol_short!("net_act"), network_id), active);
     }
 
     pub fn emit_fee_policy(env: &Env, network_id: NetworkId, enabled: bool) {
-        env.events().publish((symbol_short!("fee_pol"), network_id), enabled);
+        env.events()
+            .publish((symbol_short!("fee_pol"), network_id), enabled);
     }
 
     pub fn emit_asset_set(env: &Env, network_id: NetworkId, asset_code: &String) {
-        env.events().publish((symbol_short!("asset"), network_id), asset_code.clone());
+        env.events()
+            .publish((symbol_short!("asset"), network_id), asset_code.clone());
     }
 
     pub fn emit_registry(env: &Env, network_id: NetworkId) {
@@ -149,35 +156,56 @@ mod events {
     }
 
     pub fn emit_role_granted(env: &Env, account: &Address, role: u32, granter: &Address) {
-        env.events().publish((symbol_short!("role_g"), account.clone()), (role, granter.clone()));
+        env.events().publish(
+            (symbol_short!("role_g"), account.clone()),
+            (role, granter.clone()),
+        );
     }
 
     pub fn emit_role_revoked(env: &Env, account: &Address, role: u32, revoker: &Address) {
-        env.events().publish((symbol_short!("role_r"), account.clone()), (role, revoker.clone()));
+        env.events().publish(
+            (symbol_short!("role_r"), account.clone()),
+            (role, revoker.clone()),
+        );
     }
 
     pub fn emit_paused(env: &Env, caller: &Address) {
-        env.events().publish((symbol_short!("pause"),), caller.clone());
+        env.events()
+            .publish((symbol_short!("pause"),), caller.clone());
     }
 
     pub fn emit_unpaused(env: &Env, caller: &Address) {
-        env.events().publish((symbol_short!("unpause"),), caller.clone());
+        env.events()
+            .publish((symbol_short!("unpause"),), caller.clone());
     }
 
     pub fn emit_dao_set(env: &Env, dao: &Address) {
-        env.events().publish((symbol_short!("dao_set"),), dao.clone());
+        env.events()
+            .publish((symbol_short!("dao_set"),), dao.clone());
     }
 
     pub fn emit_default_network(env: &Env, network_id: NetworkId) {
-        env.events().publish((symbol_short!("def_net"),), network_id);
+        env.events()
+            .publish((symbol_short!("def_net"),), network_id);
     }
 
-    pub fn emit_upgraded(env: &Env, new_version: u32, new_impl: &Address, migration_data: Option<&Bytes>) {
-        env.events().publish((symbol_short!("upgraded"), new_version), (new_impl.clone(), migration_data.map(|d| d.clone())));
+    pub fn emit_upgraded(
+        env: &Env,
+        new_version: u32,
+        new_impl: &Address,
+        migration_data: Option<&Bytes>,
+    ) {
+        env.events().publish(
+            (symbol_short!("upgraded"), new_version),
+            (new_impl.clone(), migration_data.map(|d| d.clone())),
+        );
     }
 
     pub fn emit_rolled_back(env: &Env, prev_version: u32, prev_impl: &Address) {
-        env.events().publish((symbol_short!("rolled_bk"),), (prev_version, prev_impl.clone()));
+        env.events().publish(
+            (symbol_short!("rolled_bk"),),
+            (prev_version, prev_impl.clone()),
+        );
     }
 }
 
@@ -186,7 +214,10 @@ mod access_control {
     use super::*;
 
     pub fn get_roles(env: &Env, account: &Address) -> u32 {
-        env.storage().instance().get(&DataKey::Role(account.clone())).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::Role(account.clone()))
+            .unwrap_or(0)
     }
 
     pub fn has_role(env: &Env, account: &Address, role: u32) -> bool {
@@ -200,7 +231,11 @@ mod access_control {
         env.storage().instance().set(&key, &roles);
 
         let holders_key = DataKey::RoleHolders;
-        let mut holders: Vec<Address> = env.storage().instance().get(&holders_key).unwrap_or(Vec::new(env));
+        let mut holders: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&holders_key)
+            .unwrap_or(Vec::new(env));
         if !holders.contains(account) {
             holders.push_back(account.clone());
             env.storage().instance().set(&holders_key, &holders);
@@ -215,7 +250,11 @@ mod access_control {
 
         if roles == 0 {
             let holders_key = DataKey::RoleHolders;
-            let mut holders: Vec<Address> = env.storage().instance().get(&holders_key).unwrap_or(Vec::new(env));
+            let mut holders: Vec<Address> = env
+                .storage()
+                .instance()
+                .get(&holders_key)
+                .unwrap_or(Vec::new(env));
             if let Some(pos) = holders.iter().position(|a| a == *account) {
                 holders.remove(pos as u32);
                 env.storage().instance().set(&holders_key, &holders);
@@ -224,7 +263,10 @@ mod access_control {
     }
 
     pub fn get_role_holders(env: &Env) -> Vec<Address> {
-        env.storage().instance().get(&DataKey::RoleHolders).unwrap_or(Vec::new(env))
+        env.storage()
+            .instance()
+            .get(&DataKey::RoleHolders)
+            .unwrap_or(Vec::new(env))
     }
 
     pub fn require_admin(env: &Env, account: &Address) {
@@ -240,12 +282,18 @@ mod access_control {
 
     pub fn require_operator(env: &Env, account: &Address) {
         let roles = get_roles(env, account);
-        assert!((roles & (ROLE_ADMIN | ROLE_GOVERNANCE | ROLE_OPERATOR)) != 0, "not op");
+        assert!(
+            (roles & (ROLE_ADMIN | ROLE_GOVERNANCE | ROLE_OPERATOR)) != 0,
+            "not op"
+        );
         account.require_auth();
     }
 
     pub fn is_paused(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     pub fn set_paused(env: &Env, paused: bool) {
@@ -266,7 +314,10 @@ mod storage {
     }
 
     pub fn get_admin(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).expect("no admin")
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("no admin")
     }
 
     pub fn set_admin(env: &Env, admin: &Address) {
@@ -282,14 +333,20 @@ mod storage {
     }
 
     pub fn set_network_config(env: &Env, network_id: NetworkId, config: &NetworkConfig) {
-        env.storage().instance().set(&DataKey::NetworkConfig(network_id), config);
+        env.storage()
+            .instance()
+            .set(&DataKey::NetworkConfig(network_id), config);
 
         let version_key = DataKey::NetworkVersion(network_id);
         let version: u32 = env.storage().instance().get(&version_key).unwrap_or(0);
         env.storage().instance().set(&version_key, &(version + 1));
 
         let networks_key = DataKey::RegisteredNetworks;
-        let mut networks: Vec<NetworkId> = env.storage().instance().get(&networks_key).unwrap_or(Vec::new(env));
+        let mut networks: Vec<NetworkId> = env
+            .storage()
+            .instance()
+            .get(&networks_key)
+            .unwrap_or(Vec::new(env));
         if !networks.contains(&network_id) {
             networks.push_back(network_id);
             env.storage().instance().set(&networks_key, &networks);
@@ -297,7 +354,9 @@ mod storage {
     }
 
     pub fn get_network_config(env: &Env, network_id: NetworkId) -> Option<NetworkConfig> {
-        env.storage().instance().get(&DataKey::NetworkConfig(network_id))
+        env.storage()
+            .instance()
+            .get(&DataKey::NetworkConfig(network_id))
     }
 
     /// Returns `true` when `network_id` has been registered and not yet removed.
@@ -308,11 +367,16 @@ mod storage {
     }
 
     pub fn get_registered_networks(env: &Env) -> Vec<NetworkId> {
-        env.storage().instance().get(&DataKey::RegisteredNetworks).unwrap_or(Vec::new(env))
+        env.storage()
+            .instance()
+            .get(&DataKey::RegisteredNetworks)
+            .unwrap_or(Vec::new(env))
     }
 
     pub fn set_default_network(env: &Env, network_id: NetworkId) {
-        env.storage().instance().set(&DataKey::DefaultNetwork, &network_id);
+        env.storage()
+            .instance()
+            .set(&DataKey::DefaultNetwork, &network_id);
     }
 
     pub fn get_default_network(env: &Env) -> Option<NetworkId> {
@@ -320,7 +384,10 @@ mod storage {
     }
 
     pub fn get_network_version(env: &Env, network_id: NetworkId) -> u32 {
-        env.storage().instance().get(&DataKey::NetworkVersion(network_id)).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::NetworkVersion(network_id))
+            .unwrap_or(0)
     }
 
     pub fn increment_global_version(env: &Env) -> u32 {
@@ -332,15 +399,25 @@ mod storage {
     }
 
     pub fn get_global_version(env: &Env) -> u32 {
-        env.storage().instance().get(&DataKey::GlobalVersion).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::GlobalVersion)
+            .unwrap_or(0)
     }
 
     pub fn add_asset(env: &Env, network_id: NetworkId, config: &AssetConfig) {
-        let key = DataKey::NetworkAssetConfig(AssetKey { network_id, asset_address: config.asset_address.clone() });
+        let key = DataKey::NetworkAssetConfig(AssetKey {
+            network_id,
+            asset_address: config.asset_address.clone(),
+        });
         env.storage().instance().set(&key, config);
 
         let list_key = DataKey::NetworkAssetAddresses(network_id);
-        let mut assets: Vec<Address> = env.storage().instance().get(&list_key).unwrap_or(Vec::new(env));
+        let mut assets: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&list_key)
+            .unwrap_or(Vec::new(env));
         if !assets.contains(&config.asset_address) {
             assets.push_back(config.asset_address.clone());
             env.storage().instance().set(&list_key, &assets);
@@ -348,24 +425,41 @@ mod storage {
     }
 
     pub fn remove_asset(env: &Env, network_id: NetworkId, address: &Address) {
-        let key = DataKey::NetworkAssetConfig(AssetKey { network_id, asset_address: address.clone() });
+        let key = DataKey::NetworkAssetConfig(AssetKey {
+            network_id,
+            asset_address: address.clone(),
+        });
         env.storage().instance().remove(&key);
 
         let list_key = DataKey::NetworkAssetAddresses(network_id);
-        let mut assets: Vec<Address> = env.storage().instance().get(&list_key).unwrap_or(Vec::new(env));
+        let mut assets: Vec<Address> = env
+            .storage()
+            .instance()
+            .get(&list_key)
+            .unwrap_or(Vec::new(env));
         if let Some(pos) = assets.iter().position(|a| a == *address) {
             assets.remove(pos as u32);
             env.storage().instance().set(&list_key, &assets);
         }
     }
 
-    pub fn get_asset_config(env: &Env, network_id: NetworkId, address: &Address) -> Option<AssetConfig> {
-        let key = DataKey::NetworkAssetConfig(AssetKey { network_id, asset_address: address.clone() });
+    pub fn get_asset_config(
+        env: &Env,
+        network_id: NetworkId,
+        address: &Address,
+    ) -> Option<AssetConfig> {
+        let key = DataKey::NetworkAssetConfig(AssetKey {
+            network_id,
+            asset_address: address.clone(),
+        });
         env.storage().instance().get(&key)
     }
 
     pub fn get_network_assets(env: &Env, network_id: NetworkId) -> Vec<Address> {
-        env.storage().instance().get(&DataKey::NetworkAssetAddresses(network_id)).unwrap_or(Vec::new(env))
+        env.storage()
+            .instance()
+            .get(&DataKey::NetworkAssetAddresses(network_id))
+            .unwrap_or(Vec::new(env))
     }
 }
 
@@ -377,7 +471,10 @@ mod validation {
         assert!(!config.name.is_empty(), "empty name");
         assert!(!config.network_passphrase.is_empty(), "empty passphrase");
         assert!(config.fee_policy.base_fee >= 0, "invalid base fee");
-        assert!(config.block_time_seconds > 0 && config.block_time_seconds <= 3600, "invalid block time");
+        assert!(
+            config.block_time_seconds > 0 && config.block_time_seconds <= 3600,
+            "invalid block time"
+        );
     }
 
     pub fn validate_asset_config(config: &AssetConfig) {
@@ -397,7 +494,9 @@ pub struct NetworkConfigContract;
 #[contractimpl]
 impl NetworkConfigContract {
     pub fn initialize(env: Env, admin: Address, governance_dao: Option<Address>) {
-        if storage::is_initialized(&env) { panic!("already init"); }
+        if storage::is_initialized(&env) {
+            panic!("already init");
+        }
         admin.require_auth();
 
         storage::set_initialized(&env);
@@ -411,43 +510,96 @@ impl NetworkConfigContract {
         storage::set_default_network(&env, 0);
 
         events::emit_initialized(&env, &admin);
-        if let Some(dao) = governance_dao { events::emit_dao_set(&env, &dao); }
+        if let Some(dao) = governance_dao {
+            events::emit_dao_set(&env, &dao);
+        }
     }
 
-    pub fn upgrade(env: Env, caller: Address, new_impl: Address, new_version: u32, migration_data: Option<Bytes>) {
-        if !storage::is_initialized(&env) { panic!("not init"); }
+    pub fn upgrade(
+        env: Env,
+        caller: Address,
+        new_impl: Address,
+        new_version: u32,
+        migration_data: Option<Bytes>,
+    ) {
+        if !storage::is_initialized(&env) {
+            panic!("not init");
+        }
         access_control::require_governance(&env, &caller);
 
-        let current_version: u32 = env.storage().instance().get(&DataKey::CurrentVersion).unwrap_or(0);
-        if new_version <= current_version { panic!("bad version"); }
-
-        let current_impl: Option<Address> = env.storage().instance().get(&DataKey::CurrentImplementation);
-        if let Some(old) = current_impl {
-            env.storage().instance().set(&DataKey::PreviousImplementation, &old);
-            env.storage().instance().set(&DataKey::PreviousVersion, &current_version);
+        let current_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrentVersion)
+            .unwrap_or(0);
+        if new_version <= current_version {
+            panic!("bad version");
         }
 
-        env.storage().instance().set(&DataKey::CurrentImplementation, &new_impl);
-        env.storage().instance().set(&DataKey::CurrentVersion, &new_version);
+        let current_impl: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrentImplementation);
+        if let Some(old) = current_impl {
+            env.storage()
+                .instance()
+                .set(&DataKey::PreviousImplementation, &old);
+            env.storage()
+                .instance()
+                .set(&DataKey::PreviousVersion, &current_version);
+        }
+
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentImplementation, &new_impl);
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentVersion, &new_version);
 
         events::emit_upgraded(&env, new_version, &new_impl, migration_data.as_ref());
     }
 
     pub fn rollback(env: Env, caller: Address) {
-        if !storage::is_initialized(&env) { panic!("not init"); }
+        if !storage::is_initialized(&env) {
+            panic!("not init");
+        }
         access_control::require_governance(&env, &caller);
 
-        let prev_impl: Address = env.storage().instance().get(&DataKey::PreviousImplementation).expect("no rollback target");
-        let prev_version: u32 = env.storage().instance().get(&DataKey::PreviousVersion).expect("no rollback version");
+        let prev_impl: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::PreviousImplementation)
+            .expect("no rollback target");
+        let prev_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::PreviousVersion)
+            .expect("no rollback version");
 
-        let current_impl: Address = env.storage().instance().get(&DataKey::CurrentImplementation).expect("no current impl");
-        let current_version: u32 = env.storage().instance().get(&DataKey::CurrentVersion).expect("no current version");
+        let current_impl: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrentImplementation)
+            .expect("no current impl");
+        let current_version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrentVersion)
+            .expect("no current version");
 
-        env.storage().instance().set(&DataKey::PreviousImplementation, &current_impl);
-        env.storage().instance().set(&DataKey::PreviousVersion, &current_version);
+        env.storage()
+            .instance()
+            .set(&DataKey::PreviousImplementation, &current_impl);
+        env.storage()
+            .instance()
+            .set(&DataKey::PreviousVersion, &current_version);
 
-        env.storage().instance().set(&DataKey::CurrentImplementation, &prev_impl);
-        env.storage().instance().set(&DataKey::CurrentVersion, &prev_version);
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentImplementation, &prev_impl);
+        env.storage()
+            .instance()
+            .set(&DataKey::CurrentVersion, &prev_version);
 
         events::emit_rolled_back(&env, prev_version, &prev_impl);
     }
@@ -476,7 +628,12 @@ impl NetworkConfigContract {
         access_control::get_role_holders(&env)
     }
 
-    pub fn set_network_config(env: Env, caller: Address, network_id: NetworkId, config: NetworkConfig) {
+    pub fn set_network_config(
+        env: Env,
+        caller: Address,
+        network_id: NetworkId,
+        config: NetworkConfig,
+    ) {
         access_control::require_governance(&env, &caller);
         assert!(network_id != 0, "bad id");
         validation::validate_network_config(&config);
@@ -494,15 +651,23 @@ impl NetworkConfigContract {
             let n = name;
             if n == String::from_str(&env, "attestation") && c.contracts.has_attestation {
                 Some(c.contracts.attestation_contract)
-            } else if n == String::from_str(&env, "revenue_stream") && c.contracts.has_revenue_stream {
+            } else if n == String::from_str(&env, "revenue_stream")
+                && c.contracts.has_revenue_stream
+            {
                 Some(c.contracts.revenue_stream_contract)
             } else if n == String::from_str(&env, "audit_log") && c.contracts.has_audit_log {
                 Some(c.contracts.audit_log_contract)
-            } else if n == String::from_str(&env, "aggregated_attestations") && c.contracts.has_aggregated_attestations {
+            } else if n == String::from_str(&env, "aggregated_attestations")
+                && c.contracts.has_aggregated_attestations
+            {
                 Some(c.contracts.agg_attestations_contract)
-            } else if n == String::from_str(&env, "integration_registry") && c.contracts.has_integration_registry {
+            } else if n == String::from_str(&env, "integration_registry")
+                && c.contracts.has_integration_registry
+            {
                 Some(c.contracts.integration_registry_contract)
-            } else if n == String::from_str(&env, "attestation_snapshot") && c.contracts.has_attestation_snapshot {
+            } else if n == String::from_str(&env, "attestation_snapshot")
+                && c.contracts.has_attestation_snapshot
+            {
                 Some(c.contracts.attestation_snapshot_contract)
             } else {
                 None
@@ -510,7 +675,13 @@ impl NetworkConfigContract {
         })
     }
 
-    pub fn get_admin(env: Env) -> Address { storage::get_admin(&env) }
-    pub fn get_global_version(env: Env) -> u32 { storage::get_global_version(&env) }
-    pub fn get_network_version(env: Env, network_id: NetworkId) -> u32 { storage::get_network_version(&env, network_id) }
+    pub fn get_admin(env: Env) -> Address {
+        storage::get_admin(&env)
+    }
+    pub fn get_global_version(env: Env) -> u32 {
+        storage::get_global_version(&env)
+    }
+    pub fn get_network_version(env: Env, network_id: NetworkId) -> u32 {
+        storage::get_network_version(&env, network_id)
+    }
 }

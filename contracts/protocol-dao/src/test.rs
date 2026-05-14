@@ -21,7 +21,12 @@ fn setup_with_token(
     let admin = Address::generate(&env);
     let contract_id = env.register(ProtocolDao, ());
     let client = ProtocolDaoClient::new(&env, &contract_id);
-    client.initialize(&admin, &Some(token_addr.clone()), &min_votes, &proposal_duration);
+    client.initialize(
+        &admin,
+        &Some(token_addr.clone()),
+        &min_votes,
+        &proposal_duration,
+    );
     (env, client, admin, token_addr)
 }
 
@@ -230,7 +235,10 @@ fn cancel_proposal_by_creator() {
     let collector = Address::generate(&env);
     let id = client.create_fee_config_proposal(&creator, &fee_token, &collector, &1_000, &true);
     client.cancel_proposal(&creator, &id);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Rejected);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Rejected
+    );
 }
 
 #[test]
@@ -242,7 +250,10 @@ fn cancel_proposal_by_admin() {
     let collector = Address::generate(&env);
     let id = client.create_fee_config_proposal(&creator, &fee_token, &collector, &1_000, &true);
     client.cancel_proposal(&admin, &id);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Rejected);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Rejected
+    );
 }
 
 #[test]
@@ -381,7 +392,10 @@ fn quorum_exactly_at_boundary_executes() {
     client.vote_for(&voter2, &id);
     client.vote_for(&voter3, &id);
     client.execute_proposal(&admin, &id);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Executed);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Executed
+    );
 }
 
 #[test]
@@ -492,7 +506,10 @@ fn lowering_quorum_unblocks_execution() {
     client.vote_for(&voter, &id);
     client.set_voting_config(&admin, &1, &100);
     client.execute_proposal(&admin, &id);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Executed);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Executed
+    );
 }
 
 #[test]
@@ -516,7 +533,10 @@ fn gov_config_proposal_lowers_quorum_for_future_proposals() {
     let fee_id = client.create_fee_config_proposal(&voter1, &fee_token, &collector, &999, &true);
     client.vote_for(&voter1, &fee_id);
     client.execute_proposal(&admin, &fee_id);
-    assert_eq!(client.get_proposal(&fee_id).unwrap().status, ProposalStatus::Executed);
+    assert_eq!(
+        client.get_proposal(&fee_id).unwrap().status,
+        ProposalStatus::Executed
+    );
 }
 
 #[test]
@@ -568,7 +588,10 @@ fn majority_for_with_mixed_votes_executes() {
     client.vote_for(&voter2, &id);
     client.vote_against(&voter3, &id);
     client.execute_proposal(&admin, &id);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Executed);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Executed
+    );
 }
 
 #[test]
@@ -714,7 +737,10 @@ fn admin_with_token_can_vote_but_still_needs_quorum() {
     // (quorum check happens in execute_proposal, not here)
     client.vote_for(&voter2, &id);
     client.execute_proposal(&admin, &id);
-    assert_eq!(client.get_proposal(&id).unwrap().status, ProposalStatus::Executed);
+    assert_eq!(
+        client.get_proposal(&id).unwrap().status,
+        ProposalStatus::Executed
+    );
 }
 
 /// Admin cannot unilaterally execute a proposal without quorum even if they
@@ -753,7 +779,10 @@ fn each_voter_must_hold_token_independently() {
 
     // voter_b has zero balance — confirmed here; rejection tested in voter_without_token_cannot_vote
     let balance = soroban_sdk::token::Client::new(&env, &gov_token).balance(&voter_b);
-    assert_eq!(balance, 0, "voter_b must have no tokens (no delegation possible)");
+    assert_eq!(
+        balance, 0,
+        "voter_b must have no tokens (no delegation possible)"
+    );
     // Proposal still has only 1 vote (voter_a's); voter_b contributed nothing
     assert_eq!(client.get_votes_for(&id), 1);
 }
@@ -827,6 +856,6 @@ fn get_quorum_info_reflects_current_state() {
     assert_eq!(f, 1);
     assert_eq!(a, 1);
     assert_eq!(min_req, 3);
-    assert!(!quorum_ok);   // 2 < 3
+    assert!(!quorum_ok); // 2 < 3
     assert!(!majority_ok); // 1 == 1, not strictly greater
 }

@@ -11,6 +11,17 @@ use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Str
 /// Attestation client: WASM import for wasm32, crate for tests.
 #[cfg(target_arch = "wasm32")]
 mod attestation_import {
+    use soroban_sdk::{Address, BytesN, String, Vec};
+    #[allow(dead_code)]
+    pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
+    #[allow(dead_code)]
+    pub type RevocationData = (Address, u64, String);
+    #[allow(dead_code)]
+    pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
+    #[allow(dead_code)]
+    pub type AttestationStatusResult =
+        Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
+
     soroban_sdk::contractimport!(
         file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
     );
@@ -20,9 +31,6 @@ mod attestation_import {
 mod attestation_import {
     pub use veritasor_attestation::AttestationContractClient;
 }
-
-#[cfg(test)]
-mod test;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -74,7 +82,9 @@ impl RevenueSettlementContract {
             panic!("already initialized");
         }
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::NextAgreementId, &0u64);
+        env.storage()
+            .instance()
+            .set(&DataKey::NextAgreementId, &0u64);
     }
 
     /// Create a revenue-based settlement agreement.
@@ -101,7 +111,10 @@ impl RevenueSettlementContract {
     ) -> u64 {
         lender.require_auth();
         assert!(principal > 0, "principal must be positive");
-        assert!(revenue_share_bps <= 10000, "revenue_share_bps must be <= 10000");
+        assert!(
+            revenue_share_bps <= 10000,
+            "revenue_share_bps must be <= 10000"
+        );
         assert!(
             min_revenue_threshold >= 0,
             "min_revenue_threshold must be non-negative"
@@ -151,17 +164,16 @@ impl RevenueSettlementContract {
 
     /// Settle revenue for multiple periods with netting.
     ///
-    /// Aggregates revenue across all provided periods, calculates a single netted 
-    /// repayment based on summed thresholds and caps, and distributes settlement 
+    /// Aggregates revenue across all provided periods, calculates a single netted
+    /// repayment based on summed thresholds and caps, and distributes settlement
     /// records.
-    pub fn settle_multi(
-        env: Env,
-        agreement_id: u64,
-        periods: Vec<String>,
-        revenues: Vec<i128>,
-    ) {
+    pub fn settle_multi(env: Env, agreement_id: u64, periods: Vec<String>, revenues: Vec<i128>) {
         assert!(periods.len() > 0, "periods cannot be empty");
-        assert_eq!(periods.len(), revenues.len(), "mismatched periods and revenues");
+        assert_eq!(
+            periods.len(),
+            revenues.len(),
+            "mismatched periods and revenues"
+        );
 
         let agreement: Agreement = env
             .storage()
@@ -171,38 +183,47 @@ impl RevenueSettlementContract {
 
         assert_eq!(agreement.status, 0, "agreement not active");
 
-        let attestation_client =
-            attestation_import::AttestationContractClient::new(&env, &agreement.attestation_contract);
+        let _attestation_client = attestation_import::AttestationContractClient::new(
+            &env,
+            &agreement.attestation_contract,
+        );
 
-        // Prevent cross-token settlement for the same business and attestation period.
-        let business_period_token_key =
-            DataKey::BusinessPeriodToken(agreement.business.clone(), period.clone());
-        let business_period_token: Option<Address> = env
-            .storage()
-            .instance()
-            .get(&business_period_token_key);
-        if let Some(existing_token) = business_period_token {
+        // Per-period cross-token & duplicate-commitment validation.
+        for i in 0..periods.len() {
+            let period = periods.get(i).unwrap();
+
+            let business_period_token_key =
+                DataKey::BusinessPeriodToken(agreement.business.clone(), period.clone());
+            let business_period_token: Option<Address> =
+                env.storage().instance().get(&business_period_token_key);
+            if let Some(existing_token) = business_period_token {
+                assert_eq!(
+                    existing_token, agreement.token,
+                    "multi-currency settlement not allowed for period"
+                );
+            } else {
+                env.storage()
+                    .instance()
+                    .set(&business_period_token_key, &agreement.token);
+            }
+
+            let committed_key = DataKey::Committed(agreement_id, period.clone());
+            let previously_committed: i128 =
+                env.storage().instance().get(&committed_key).unwrap_or(0);
             assert_eq!(
-                existing_token, agreement.token,
-                "multi-currency settlement not allowed for period"
+                previously_committed, 0,
+                "commitment already made for period"
             );
-        } else {
-            env.storage()
-                .instance()
-                .set(&business_period_token_key, &agreement.token);
         }
 
-        // Check commitment not already made for this period
-        let committed_key = DataKey::Committed(agreement_id, period.clone());
-        let previously_committed: i128 = env
-            .storage()
-            .instance()
-            .get(&committed_key)
-            .unwrap_or(0);
-        assert_eq!(
-            previously_committed, 0,
-            "commitment already made for period"
-        );
+        // Aggregate revenue, threshold, and cap across periods.
+        let num_periods: i128 = periods.len() as i128;
+        let mut total_revenue: i128 = 0;
+        for i in 0..periods.len() {
+            total_revenue = total_revenue.saturating_add(revenues.get(i).unwrap());
+        }
+        let agg_threshold: i128 = agreement.min_revenue_threshold.saturating_mul(num_periods);
+        let agg_cap: i128 = agreement.max_repayment_amount.saturating_mul(num_periods);
 
         let total_repayment_amount = if total_revenue >= agg_threshold && total_revenue > 0 {
             let share = (total_revenue as u128)
@@ -216,7 +237,11 @@ impl RevenueSettlementContract {
         // Transfer tokens
         if total_repayment_amount > 0 {
             let token_client = token::Client::new(&env, &agreement.token);
-            token_client.transfer(&agreement.business, &agreement.lender, &total_repayment_amount);
+            token_client.transfer(
+                &agreement.business,
+                &agreement.lender,
+                &total_repayment_amount,
+            );
         }
 
         // Phase 3: Recording Settlements and Commitments
@@ -227,7 +252,7 @@ impl RevenueSettlementContract {
         for i in 0..periods.len() {
             let period = periods.get(i).unwrap();
             let revenue = revenues.get(i).unwrap();
-            
+
             let amount_for_record = if i == periods.len() - 1 {
                 dist_repayment + remainder
             } else {

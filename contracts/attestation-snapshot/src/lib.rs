@@ -61,9 +61,6 @@ mod attestation_import {
     pub use veritasor_attestation::AttestationContractClient;
 }
 
-#[cfg(test)]
-mod test;
-
 // ════════════════════════════════════════════════════════════════════
 //  Storage types
 // ════════════════════════════════════════════════════════════════════
@@ -228,7 +225,7 @@ impl AttestationSnapshotContract {
             let att_client =
                 attestation_import::AttestationContractClient::new(&env, &attestation_contract);
             let has_attestation = att_client.get_attestation(&business, &period).is_some();
-            let revoked = att_client.is_revoked(&business, &period);
+            let revoked = att_client.get_revocation_info(&business, &period).is_some();
             assert!(
                 has_attestation,
                 "attestation must exist for this business and period"

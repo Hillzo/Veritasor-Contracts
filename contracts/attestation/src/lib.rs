@@ -1,9 +1,15 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec};
-use core::cmp::Ordering;
 
-// Use the crate client directly for both wasm32 and host builds
-use veritasor_attestor_staking::AttestorStakingContractClient;
+// Tests rely on `std` (e.g. `std::format!`, `std::vec!`); pull it in only when
+// building the test harness so the contract crate remains `no_std`.
+#[cfg(test)]
+extern crate std;
+
+use core::cmp::Ordering;
+use soroban_sdk::{
+    contract, contractimpl, contracttype, Address, BytesN, Env, String, Symbol, Vec,
+};
+
 use veritasor_common::replay_protection;
 
 // Nonce channels
@@ -34,6 +40,7 @@ pub type AttestationStatusResult = Vec<(String, Option<AttestationData>, Option<
 
 // ─── Feature modules ───
 pub mod access_control;
+pub mod dispute;
 pub mod dynamic_fees;
 pub mod events;
 pub mod extended_metadata;
@@ -41,16 +48,17 @@ pub mod fees;
 pub mod multisig;
 pub mod rate_limit;
 pub mod registry;
-pub mod dispute;
 
 pub use access_control::{ROLE_ADMIN, ROLE_ATTESTOR, ROLE_BUSINESS, ROLE_OPERATOR};
+pub use dispute::{
+    Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution,
+};
 pub use dynamic_fees::{compute_fee, DataKey, FeeConfig};
 pub use events::{AttestationMigratedEvent, AttestationRevokedEvent, AttestationSubmittedEvent};
-pub use fees::{FlatFeeConfig, collect_flat_fee};
+pub use fees::{collect_flat_fee, FlatFeeConfig};
 pub use multisig::{Proposal, ProposalAction, ProposalStatus};
 pub use rate_limit::RateLimitConfig;
 pub use registry::{BusinessRecord, BusinessStatus};
-pub use dispute::{Dispute, DisputeOutcome, DisputeResolution, DisputeStatus, DisputeType, OptionalResolution};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -112,7 +120,12 @@ impl AttestationContract {
     ) {
         dynamic_fees::require_admin(&env);
         assert!(base_fee >= 0, "base_fee must be non-negative");
-        let config = FeeConfig { token, collector, base_fee, enabled };
+        let config = FeeConfig {
+            token,
+            collector,
+            base_fee,
+            enabled,
+        };
         dynamic_fees::set_fee_config(&env, &config);
     }
 
@@ -144,17 +157,26 @@ impl AttestationContract {
         enabled: bool,
     ) {
         dynamic_fees::require_admin(&env);
-        let config = FlatFeeConfig { token, treasury, amount, enabled };
+        let config = FlatFeeConfig {
+            token,
+            collector,
+            amount,
+            enabled,
+        };
         fees::set_flat_fee_config(&env, &config);
     }
 
     pub fn set_attestor_staking_contract(env: Env, caller: Address, staking_contract: Address) {
         access_control::require_admin(&env, &caller);
-        env.storage().instance().set(&DataKey::AttestorStakingContract, &staking_contract);
+        env.storage()
+            .instance()
+            .set(&DataKey::AttestorStakingContract, &staking_contract);
     }
 
     pub fn get_attestor_staking_contract(env: Env) -> Option<Address> {
-        env.storage().instance().get(&DataKey::AttestorStakingContract)
+        env.storage()
+            .instance()
+            .get(&DataKey::AttestorStakingContract)
     }
 
     pub fn grant_role(env: Env, caller: Address, account: Address, role: u32) {
@@ -265,7 +287,7 @@ impl AttestationContract {
             if env.storage().instance().has(&key) {
                 panic!("attestation already exists for this business and period");
             }
-            
+
             Self::validate_expiry(&env, item.timestamp, item.expiry_timestamp);
         }
 
@@ -299,7 +321,7 @@ impl AttestationContract {
                 &item.proof_hash,
                 item.expiry_timestamp,
             );
-            
+
             rate_limit::record_submission(&env, &item.business);
         }
     }
@@ -308,20 +330,8 @@ impl AttestationContract {
         if let Some(data) = Self::get_attestation(env.clone(), business, period) {
             return Self::attestation_expired(&env, &data);
         }
-
-        // Security: Commitment enforcement
-        if let Some(ref provided_hash) = proof_hash {
-            let expected_hash = Self::compute_commitment(
-                env.clone(),
-                business.clone(),
-                period.clone(),
-                merkle_root.clone(),
-                version,
-            );
-            if provided_hash != &expected_hash {
-                panic!("proof_hash does not match canonical commitment");
-            }
-        }
+        false
+    }
 
     pub fn get_revocation_info(
         env: Env,
@@ -349,9 +359,11 @@ impl AttestationContract {
         let mut results = Vec::new(&env);
         for period in periods.iter() {
             let attestation = Self::get_attestation(env.clone(), business.clone(), period.clone());
-            let revocation = Self::get_revocation_info(env.clone(), business.clone(), period.clone());
+            let revocation =
+                Self::get_revocation_info(env.clone(), business.clone(), period.clone());
             results.push_back((period, attestation, revocation));
         }
+        results
     }
 
     pub fn verify_attestation(
@@ -360,23 +372,13 @@ impl AttestationContract {
         period: String,
         merkle_root: BytesN<32>,
     ) -> bool {
-        if let Some((stored_root, _, _, _, _, _)) = Self::get_attestation(env.clone(), business.clone(), period.clone()) {
-            stored_root == merkle_root && !Self::is_revoked(env, business, period)
+        if let Some((stored_root, _, _, _, _, _)) =
+            Self::get_attestation(env.clone(), business.clone(), period.clone())
+        {
+            stored_root == merkle_root && !dispute::is_attestation_revoked(&env, &business, &period)
         } else {
             false
         }
-        Self::submit_attestations_batch(env, items);
-    }
-
-    pub fn migrate_attestation(
-        env: Env,
-        admin: Address,
-        business: Address,
-        period: String,
-        reason: String,
-    ) {
-        // TODO: implement migration logic
-        unimplemented!("migrate_attestation not implemented");
     }
 
     pub fn submit_attestation_with_metadata(
@@ -389,7 +391,17 @@ impl AttestationContract {
         currency_code: String,
         is_net: bool,
     ) {
-        Self::submit_attestation(env.clone(), business.clone(), period.clone(), merkle_root, timestamp, version, 0i128, None, None);
+        Self::submit_attestation(
+            env.clone(),
+            business.clone(),
+            period.clone(),
+            merkle_root,
+            timestamp,
+            version,
+            0i128,
+            None,
+            None,
+        );
         let metadata = extended_metadata::validate_metadata(&env, &currency_code, is_net);
         extended_metadata::set_metadata(&env, &business, &period, &metadata);
     }
@@ -423,7 +435,8 @@ impl AttestationContract {
         }
 
         let key = MultiPeriodKey::Ranges(business.clone());
-        let mut ranges: Vec<AttestationRange> = env.storage().instance().get(&key).unwrap_or(Vec::new(&env));
+        let mut ranges: Vec<AttestationRange> =
+            env.storage().instance().get(&key).unwrap_or(Vec::new(&env));
 
         for range in ranges.iter() {
             if !range.revoked {
@@ -463,12 +476,32 @@ impl AttestationContract {
         access_control::require_admin(&env, &caller);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
-        let (old_root, timestamp, old_ver, fee, proof_hash, expiry): AttestationData = env.storage().instance().get(&key).expect("attestation not found");
+        let (old_root, timestamp, old_ver, fee, proof_hash, expiry): AttestationData = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("attestation not found");
 
-        let data: AttestationData = (new_merkle_root.clone(), timestamp, new_version, fee, proof_hash, expiry);
+        let data: AttestationData = (
+            new_merkle_root.clone(),
+            timestamp,
+            new_version,
+            fee,
+            proof_hash,
+            expiry,
+        );
         env.storage().instance().set(&key, &data);
 
-        events::emit_attestation_migrated(&env, &business, &period, &old_root, &new_merkle_root, old_ver, new_version, &caller);
+        events::emit_attestation_migrated(
+            &env,
+            &business,
+            &period,
+            &old_root,
+            &new_merkle_root,
+            old_ver,
+            new_version,
+            &caller,
+        );
     }
 
     pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
@@ -480,7 +513,11 @@ impl AttestationContract {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
     }
 
-    pub fn get_attestation_for_period(env: Env, business: Address, period: String) -> Option<AttestationData> {
+    pub fn get_attestation_for_period(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<AttestationData> {
         Self::get_attestation(env, business, period)
     }
 
@@ -491,9 +528,16 @@ impl AttestationContract {
         merkle_root: BytesN<32>,
     ) -> bool {
         let key = MultiPeriodKey::Ranges(business);
-        if let Some(ranges) = env.storage().instance().get::<_, Vec<AttestationRange>>(&key) {
+        if let Some(ranges) = env
+            .storage()
+            .instance()
+            .get::<_, Vec<AttestationRange>>(&key)
+        {
             for range in ranges.iter() {
-                if !range.revoked && target_period >= range.start_period && target_period <= range.end_period {
+                if !range.revoked
+                    && target_period >= range.start_period
+                    && target_period <= range.end_period
+                {
                     return range.merkle_root == merkle_root;
                 }
             }
@@ -528,7 +572,11 @@ impl AttestationContract {
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
         let key = MultiPeriodKey::Ranges(business.clone());
-        let ranges: Vec<AttestationRange> = env.storage().instance().get(&key).expect("no multi-period attestations");
+        let ranges: Vec<AttestationRange> = env
+            .storage()
+            .instance()
+            .get(&key)
+            .expect("no multi-period attestations");
         let mut found = false;
         let mut updated = Vec::new(&env);
         for mut range in ranges.iter() {
@@ -538,7 +586,9 @@ impl AttestationContract {
             }
             updated.push_back(range);
         }
-        if !found { panic!("root not found"); }
+        if !found {
+            panic!("root not found");
+        }
         env.storage().instance().set(&key, &updated);
     }
 
@@ -548,7 +598,9 @@ impl AttestationContract {
 
     pub fn get_fee_quote(env: Env, business: Address) -> i128 {
         let dynamic = dynamic_fees::calculate_fee(&env, &business);
-        let flat = fees::get_flat_fee_config(&env).map(|c| c.amount).unwrap_or(0);
+        let flat = fees::get_flat_fee_config(&env)
+            .map(|c| c.amount)
+            .unwrap_or(0);
         dynamic + flat
     }
 
@@ -560,7 +612,10 @@ impl AttestationContract {
         rate_limit::get_submission_count(&env, &business)
     }
 
-    pub fn configure_key_rotation(env: Env, config: veritasor_common::key_rotation::RotationConfig) {
+    pub fn configure_key_rotation(
+        env: Env,
+        config: veritasor_common::key_rotation::RotationConfig,
+    ) {
         dynamic_fees::require_admin(&env);
         veritasor_common::key_rotation::set_rotation_config(&env, &config);
     }
@@ -573,7 +628,8 @@ impl AttestationContract {
     pub fn confirm_key_rotation(env: Env, caller: Address) {
         caller.require_auth();
         let old_admin = dynamic_fees::get_admin(&env);
-        let pending = veritasor_common::key_rotation::get_pending_rotation(&env).expect("no pending");
+        let pending =
+            veritasor_common::key_rotation::get_pending_rotation(&env).expect("no pending");
         assert!(caller == pending.new_admin, "not new admin");
         veritasor_common::key_rotation::confirm_rotation(&env, &pending.new_admin);
         dynamic_fees::set_admin(&env, &pending.new_admin);
@@ -590,11 +646,15 @@ impl AttestationContract {
         veritasor_common::key_rotation::has_pending_rotation(&env)
     }
 
-    pub fn get_pending_key_rotation(env: Env) -> Option<veritasor_common::key_rotation::RotationRequest> {
+    pub fn get_pending_key_rotation(
+        env: Env,
+    ) -> Option<veritasor_common::key_rotation::RotationRequest> {
         veritasor_common::key_rotation::get_pending_rotation(&env)
     }
 
-    pub fn get_key_rotation_history(env: Env) -> Vec<veritasor_common::key_rotation::RotationRecord> {
+    pub fn get_key_rotation_history(
+        env: Env,
+    ) -> Vec<veritasor_common::key_rotation::RotationRecord> {
         veritasor_common::key_rotation::get_rotation_history(&env)
     }
 
@@ -606,30 +666,57 @@ impl AttestationContract {
         veritasor_common::key_rotation::get_rotation_config(&env)
     }
 
-     pub fn open_dispute(env: Env, challenger: Address, business: Address, period: String, dispute_type: DisputeType, evidence: String) -> u64 {
-         challenger.require_auth();
-         dispute::validate_dispute_eligibility(&env, &challenger, &business, &period).expect("not eligible");
-         let id = dispute::generate_dispute_id(&env);
-         let d = Dispute {
-             id, challenger, business: business.clone(), period: period.clone(), status: DisputeStatus::Open, dispute_type, evidence, timestamp: env.ledger().timestamp(), resolution: OptionalResolution::None,
-         };
-         dispute::store_dispute(&env, &d);
-         dispute::add_dispute_to_attestation_index(&env, &business, &period, id);
-         dispute::add_dispute_to_challenger_index(&env, &d.challenger, id);
-         id
-     }
+    pub fn open_dispute(
+        env: Env,
+        challenger: Address,
+        business: Address,
+        period: String,
+        dispute_type: DisputeType,
+        evidence: String,
+    ) -> u64 {
+        challenger.require_auth();
+        dispute::validate_dispute_eligibility(&env, &challenger, &business, &period)
+            .expect("not eligible");
+        let id = dispute::generate_dispute_id(&env);
+        let d = Dispute {
+            id,
+            challenger,
+            business: business.clone(),
+            period: period.clone(),
+            status: DisputeStatus::Open,
+            dispute_type,
+            evidence,
+            timestamp: env.ledger().timestamp(),
+            resolution: OptionalResolution::None,
+        };
+        dispute::store_dispute(&env, &d);
+        dispute::add_dispute_to_attestation_index(&env, &business, &period, id);
+        dispute::add_dispute_to_challenger_index(&env, &d.challenger, id);
+        id
+    }
 
-     pub fn resolve_dispute(env: Env, dispute_id: u64, resolver: Address, outcome: DisputeOutcome, notes: String) {
-         access_control::require_admin(&env, &resolver);
-         dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
-         let resolution = dispute::DisputeResolution { resolver, outcome, timestamp: env.ledger().timestamp(), notes };
-         dispute::store_dispute_resolution(&env, dispute_id, &resolution);
-         if let Some(mut d) = dispute::get_dispute(&env, dispute_id) {
-             d.status = DisputeStatus::Resolved;
-             d.resolution = OptionalResolution::Some(resolution);
-             dispute::store_dispute(&env, &d);
-         }
-     }
+    pub fn resolve_dispute(
+        env: Env,
+        dispute_id: u64,
+        resolver: Address,
+        outcome: DisputeOutcome,
+        notes: String,
+    ) {
+        access_control::require_admin(&env, &resolver);
+        dispute::validate_dispute_resolution(&env, dispute_id, &resolver).expect("invalid");
+        let resolution = dispute::DisputeResolution {
+            resolver,
+            outcome,
+            timestamp: env.ledger().timestamp(),
+            notes,
+        };
+        dispute::store_dispute_resolution(&env, dispute_id, &resolution);
+        if let Some(mut d) = dispute::get_dispute(&env, dispute_id) {
+            d.status = DisputeStatus::Resolved;
+            d.resolution = OptionalResolution::Some(resolution);
+            dispute::store_dispute(&env, &d);
+        }
+    }
 
     pub fn close_dispute(env: Env, dispute_id: u64) {
         let d = dispute::validate_dispute_closure(&env, dispute_id).expect("invalid");
@@ -702,21 +789,32 @@ impl AttestationContract {
             current_cursor += 1;
 
             if let Some(ref start) = period_start {
-                if compare_strings(&period, start) == Ordering::Less { continue; }
+                if compare_strings(&period, start) == Ordering::Less {
+                    continue;
+                }
             }
             if let Some(ref end) = period_end {
-                if compare_strings(&period, end) == Ordering::Greater { continue; }
+                if compare_strings(&period, end) == Ordering::Greater {
+                    continue;
+                }
             }
 
-            if let Some(data) = Self::get_attestation(env.clone(), business.clone(), period.clone()) {
+            if let Some(data) = Self::get_attestation(env.clone(), business.clone(), period.clone())
+            {
                 let (root, ts, ver, _fee, _, _) = data;
-                
+
                 if let Some(v) = version_filter {
-                    if ver != v { continue; }
+                    if ver != v {
+                        continue;
+                    }
                 }
 
-                let is_rev = Self::is_revoked(env.clone(), business.clone(), period.clone());
-                let status = if is_rev { STATUS_ACTIVE + 1 } else { STATUS_ACTIVE };
+                let is_rev = dispute::is_attestation_revoked(&env, &business, &period);
+                let status = if is_rev {
+                    STATUS_ACTIVE + 1
+                } else {
+                    STATUS_ACTIVE
+                };
 
                 if status_filter != STATUS_FILTER_ALL && status != status_filter {
                     continue;
@@ -752,6 +850,6 @@ impl AttestationContract {
 
 // ── Test Modules ──
 #[cfg(test)]
-mod test;
-#[cfg(test)]
 mod batch_submission_test;
+#[cfg(test)]
+mod test;

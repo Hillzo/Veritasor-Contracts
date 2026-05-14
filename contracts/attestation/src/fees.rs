@@ -102,11 +102,10 @@ pub fn collect_flat_fee(env: &Env, payer: &Address) -> i128 {
     };
 
     let client = token::Client::new(env, &config.token);
-    
+
     // Explicit authorization check is handled by the caller or token contract.
     // If balance is insufficient, transfer will panic in the token contract.
     client.transfer(payer, &config.collector, &config.amount);
 
     config.amount
 }
-

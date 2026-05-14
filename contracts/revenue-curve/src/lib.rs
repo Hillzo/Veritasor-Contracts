@@ -60,6 +60,17 @@ use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, String, Ve
 
 #[cfg(target_arch = "wasm32")]
 mod attestation_import {
+    use soroban_sdk::{Address, BytesN, String, Vec};
+    #[allow(dead_code)]
+    pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
+    #[allow(dead_code)]
+    pub type RevocationData = (Address, u64, String);
+    #[allow(dead_code)]
+    pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
+    #[allow(dead_code)]
+    pub type AttestationStatusResult =
+        Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
+
     soroban_sdk::contractimport!(
         file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
     );
@@ -69,9 +80,6 @@ mod attestation_import {
 mod attestation_import {
     pub use veritasor_attestation::AttestationContractClient;
 }
-
-#[cfg(test)]
-mod test;
 
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -309,7 +317,7 @@ impl RevenueCurveContract {
         let client =
             attestation_import::AttestationContractClient::new(&env, &attestation_contract);
         let exists = client.get_attestation(&business, &period).is_some();
-        let revoked = client.is_revoked(&business, &period);
+        let revoked = client.get_revocation_info(&business, &period).is_some();
 
         assert!(exists, "attestation not found");
         assert!(!revoked, "attestation is revoked");

@@ -292,7 +292,7 @@ pub fn set_role_escalation_use_delegated_power(env: &Env, enabled: bool) {
 pub fn set_emergency_pause(env: &Env, caller: &Address, paused: bool) {
     require_governance_initialized(env);
     caller.require_auth();
-    
+
     // Emergency pause requires role escalation power to prevent abuse
     if paused {
         require_role_escalation_threshold(env, caller);
@@ -321,10 +321,12 @@ pub fn set_emergency_override_admin(env: &Env, caller: &Address, admin: Option<A
     require_role_escalation_threshold(env, caller);
 
     match &admin {
-        Some(addr) => env.storage()
+        Some(addr) => env
+            .storage()
             .instance()
             .set(&GovernanceKey::EmergencyOverrideAdmin, addr),
-        None => env.storage()
+        None => env
+            .storage()
             .instance()
             .remove(&GovernanceKey::EmergencyOverrideAdmin),
     }
@@ -339,9 +341,10 @@ pub fn set_emergency_override_admin(env: &Env, caller: &Address, admin: Option<A
 /// - `role_address`: The address that was assigned a role.
 /// - `timestamp`: The timestamp of the assignment.
 pub fn record_role_assignment(env: &Env, role_address: &Address, timestamp: u64) {
-    env.storage()
-        .instance()
-        .set(&GovernanceKey::LastRoleAssignment(role_address.clone()), &timestamp);
+    env.storage().instance().set(
+        &GovernanceKey::LastRoleAssignment(role_address.clone()),
+        &timestamp,
+    );
 }
 
 /// Get the last role assignment timestamp for drift protection.

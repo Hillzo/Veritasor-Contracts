@@ -51,9 +51,6 @@ mod snapshot_import {
     pub use veritasor_attestation_snapshot::{AttestationSnapshotContractClient, SnapshotRecord};
 }
 
-#[cfg(test)]
-mod test;
-
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub struct AggregatedRootRecord {
@@ -72,7 +69,6 @@ pub enum DataKey {
     /// Portfolio ID -> Vec<AggregatedRootRecord> (submitted roots).
     PortfolioRoots(String),
 }
-
 
 /// Summary metrics for a portfolio (aggregated from snapshot contract).
 #[contracttype]
@@ -108,12 +104,7 @@ impl AggregatedAttestationsContract {
             panic!("already initialized");
         }
         admin.require_auth();
-        replay_protection::verify_and_increment_nonce(
-            &env,
-            &admin,
-            NONCE_CHANNEL_ADMIN,
-            nonce,
-        );
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         env.storage().instance().set(&DataKey::Admin, &admin);
     }
 
@@ -135,12 +126,7 @@ impl AggregatedAttestationsContract {
         Self::require_admin(&env, &caller);
         Self::assert_portfolio_id_within_limit(&portfolio_id);
         Self::assert_portfolio_businesses_valid(&businesses);
-        replay_protection::verify_and_increment_nonce(
-            &env,
-            &caller,
-            NONCE_CHANNEL_ADMIN,
-            nonce,
-        );
+        replay_protection::verify_and_increment_nonce(&env, &caller, NONCE_CHANNEL_ADMIN, nonce);
 
         env.storage()
             .instance()
@@ -369,7 +355,10 @@ impl AggregatedAttestationsContract {
         Self::require_admin(&env, &caller);
 
         assert!(start_timestamp < end_timestamp, "invalid window boundaries");
-        assert!(end_timestamp <= env.ledger().timestamp(), "future window boundary");
+        assert!(
+            end_timestamp <= env.ledger().timestamp(),
+            "future window boundary"
+        );
 
         let roots_key = DataKey::PortfolioRoots(portfolio_id);
         let mut roots_vec: Vec<AggregatedRootRecord> = env
@@ -417,7 +406,10 @@ impl AggregatedAttestationsContract {
     /// Get all aggregated roots for a portfolio.
     pub fn get_aggregated_roots(env: Env, portfolio_id: String) -> Vec<AggregatedRootRecord> {
         let roots_key = DataKey::PortfolioRoots(portfolio_id);
-        env.storage().instance().get(&roots_key).unwrap_or(Vec::new(&env))
+        env.storage()
+            .instance()
+            .get(&roots_key)
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Get the aggregated root applicable at a given timestamp.

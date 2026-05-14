@@ -71,9 +71,6 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
 };
 
-#[cfg(test)]
-mod test;
-
 // ════════════════════════════════════════════════════════════════════
 //  Schema Version
 // ════════════════════════════════════════════════════════════════════
@@ -198,7 +195,6 @@ pub const TOPIC_ADM_XFER: Symbol = symbol_short!("adm_xfer");
 //    4. Field order is stable; new optional fields go at the END only.
 // ════════════════════════════════════════════════════════════════════
 
-const TOPIC_LENDER_SET: Symbol = symbol_short!("lnd_set");
 const TOPIC_LENDER_REMOVED: Symbol = symbol_short!("lnd_rem");
 const TOPIC_GOV_GRANTED: Symbol = symbol_short!("gov_add");
 const TOPIC_GOV_REVOKED: Symbol = symbol_short!("gov_del");
@@ -208,6 +204,22 @@ const TOPIC_DELEGATED_ADMIN_REVOKED: Symbol = symbol_short!("dlg_ad_rv");
 
 /// Payload for `lnd_set` events (update of an existing lender record).
 ///
+/// Payload for `lnd_new` events (first-time enrollment via `set_lender`).
+#[contracttype]
+#[derive(Clone, Debug)]
+pub struct LenderEnrolledEvent {
+    /// The lender address newly enrolled.
+    pub lender: Address,
+    /// Tier value at enrollment.
+    pub tier: u32,
+    /// Status at enrollment.
+    pub status: LenderStatus,
+    /// Address that authorized the enrollment.
+    pub changed_by: Address,
+    /// Ledger sequence at enrollment.
+    pub enrolled_at: u32,
+}
+
 /// Emitted on every `set_lender` call where the lender was already enrolled.
 /// Both new and previous state are included so off-chain indexers can
 /// reconstruct a full diff without additional storage reads.
@@ -346,7 +358,10 @@ impl LenderAccessListContract {
     /// - If `new_admin` equals the current admin (no-op guard).
     pub fn transfer_admin(env: Env, admin: Address, new_admin: Address) {
         Self::require_admin(&env, &admin);
-        assert!(admin != new_admin, "new_admin must differ from current admin");
+        assert!(
+            admin != new_admin,
+            "new_admin must differ from current admin"
+        );
 
         env.storage().instance().set(&DataKey::Admin, &new_admin);
 

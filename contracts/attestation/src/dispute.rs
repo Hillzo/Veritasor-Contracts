@@ -248,7 +248,9 @@ pub fn get_revocation_sequence(env: &Env) -> u64 {
 /// Panics on u64 overflow (practically impossible: ~1.8 × 10¹⁹ revocations).
 fn increment_revocation_sequence(env: &Env) -> u64 {
     let current = get_revocation_sequence(env);
-    let next = current.checked_add(1).expect("revocation sequence overflow");
+    let next = current
+        .checked_add(1)
+        .expect("revocation sequence overflow");
     env.storage()
         .instance()
         .set(&DisputeKey::RevocationSequence, &next);
@@ -462,7 +464,10 @@ pub fn require_revocation_authorized(
 
     // 3. Attestation must exist.
     let attestation_key = DataKey::Attestation(business.clone(), period.clone());
-    assert!(env.storage().instance().has(&attestation_key), "attestation not found");
+    assert!(
+        env.storage().instance().has(&attestation_key),
+        "attestation not found"
+    );
 
     // 4. Idempotency guard — must come before any write to prevent double-index.
     assert!(

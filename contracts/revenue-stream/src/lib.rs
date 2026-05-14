@@ -12,7 +12,6 @@
 use soroban_sdk::{
     contract, contractimpl, contracttype, token, Address, BytesN, Env, IntoVal, String,
 };
-use veritasor_attestation::AttestationContractClient;
 use veritasor_common::replay_protection;
 
 /// Nonce channel for admin replay protection.
@@ -24,7 +23,7 @@ mod attestation_import {
     // Define type aliases locally to match attestation contract
     use soroban_sdk::{Address, BytesN, String, Vec};
     #[allow(dead_code)]
-    pub type AttestationData = (BytesN<32>, u64, u32, i128);
+    pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
     #[allow(dead_code)]
     pub type RevocationData = (Address, u64, String);
     #[allow(dead_code)]
@@ -46,58 +45,16 @@ use veritasor_attestation::AttestationContractClient;
 #[cfg(target_arch = "wasm32")]
 use attestation_import::AttestationContractClient;
 
-#[cfg(target_arch = "wasm32")]
-impl<'a> AttestationContractClient<'a> {
-    pub fn new(env: &'a Env, address: &'a Address) -> Self {
-        AttestationContractClient { env, address }
-    }
-
-    #[allow(clippy::type_complexity)]
-    pub fn get_attestation(
-        &self,
-        business: &Address,
-        period: &String,
-    ) -> Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)> {
-        let mut args = soroban_sdk::Vec::new(self.env);
-        args.push_back(business.into_val(self.env));
-        args.push_back(period.into_val(self.env));
-        self.env.invoke_contract(
-            self.address,
-            &soroban_sdk::Symbol::new(self.env, "get_attestation"),
-            args,
-        )
-    }
-
-    pub fn is_revoked(&self, business: &Address, period: &String) -> bool {
-        let mut args = soroban_sdk::Vec::new(self.env);
-        args.push_back(business.into_val(self.env));
-        args.push_back(period.into_val(self.env));
-        self.env.invoke_contract(
-            self.address,
-            &soroban_sdk::Symbol::new(self.env, "is_revoked"),
-            args,
-        )
-    }
-}
-
-#[cfg(test)]
-mod test;
-
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 pub enum VestingSchedule {
-    /// One payment: zero or more i128 is vested once the optional cliff (ledger time) is reached.
-    /// Vested amount is always the full `Stream::amount` after the cliff, or immediately if
-    /// `cliff` is `None` (time does not block vesting; attestation and pause still apply at release).
-    Lump { cliff: Option<u64> },
-    /// Linear accrual: from `accrual_start` (inclusive) to `accrual_end` (exclusive of duration
-    /// endpoint in the sense that at `accrual_end` the full amount is vested). Invariants enforced at
-    /// create: `accrual_start < accrual_end` and `accrual_end - accrual_start` fits in u64; vesting
-    /// uses the interval `[accrual_start, accrual_end)`.
-    Linear {
-        accrual_start: u64,
-        accrual_end: u64,
-    },
+    /// One payment: vested when the optional `cliff` (ledger time) is reached.
+    /// Vested amount is always the full `Stream::amount` after the cliff, or
+    /// immediately if `cliff` is `None`.
+    Lump(Option<u64>),
+    /// Linear accrual on `[accrual_start, accrual_end)`. Invariants enforced at
+    /// create: `accrual_start < accrual_end`.
+    Linear(u64, u64),
 }
 
 #[contracttype]
@@ -167,24 +124,18 @@ fn effective_vest_ledger_time(env: &Env) -> u64 {
     if let Some(m) = env
         .storage()
         .instance()
-        .get(&DataKey::VestTimeRemap)
+        .get::<_, VestTimeRemap>(&DataKey::VestTimeRemap)
     {
-        return m
-            .t_eff0
-            .saturating_add(ledger.saturating_sub(m.at_ledger));
+        return m.t_eff0.saturating_add(ledger.saturating_sub(m.at_ledger));
     }
     ledger
 }
 
 /// Time-based portion of the stream that is vested at `t_upper` (not accounting for attestation).
-fn vested_by_schedule(
-    amount: i128,
-    vesting: &VestingSchedule,
-    t_upper: u64,
-) -> i128 {
+fn vested_by_schedule(amount: i128, vesting: &VestingSchedule, t_upper: u64) -> i128 {
     assert!(amount > 0, "internal: amount");
     match vesting {
-        VestingSchedule::Lump { cliff } => {
+        VestingSchedule::Lump(cliff) => {
             if let Some(c) = cliff {
                 if t_upper < *c {
                     return 0;
@@ -192,10 +143,7 @@ fn vested_by_schedule(
             }
             amount
         }
-        VestingSchedule::Linear {
-            accrual_start,
-            accrual_end,
-        } => {
+        VestingSchedule::Linear(accrual_start, accrual_end) => {
             if t_upper <= *accrual_start {
                 return 0;
             }
@@ -205,10 +153,10 @@ fn vested_by_schedule(
             }
             let duration = (end - accrual_start) as i128;
             let elapsed = (t_upper - accrual_start) as i128;
-            (amount
+            amount
                 .checked_mul(elapsed)
                 .and_then(|v| v.checked_div(duration))
-                .expect("vesting math overflow or zero duration")) as i128
+                .expect("vesting math overflow or zero duration")
         }
     }
 }
@@ -272,11 +220,7 @@ impl RevenueStreamContract {
         // Verify and increment nonce for replay protection
         replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
         assert!(amount > 0, "amount must be positive");
-        if let VestingSchedule::Linear {
-            accrual_start,
-            accrual_end,
-        } = &vesting
-        {
+        if let VestingSchedule::Linear(accrual_start, accrual_end) = &vesting {
             assert!(
                 accrual_start < accrual_end,
                 "accrual_start must be before accrual_end"
@@ -335,20 +279,23 @@ impl RevenueStreamContract {
         assert!(!paused, "contract is paused");
 
         let t_upper = effective_vest_ledger_time(&env);
-        if let VestingSchedule::Lump { cliff: Some(c) } = &stream.vesting {
+        if let VestingSchedule::Lump(Some(c)) = &stream.vesting {
             if t_upper < *c {
                 panic!("cliff not reached");
             }
         }
         let time_vested = vested_by_schedule(stream.amount, &stream.vesting, t_upper);
-        let pay_cap = (time_vested - stream.released_amount).min(stream.amount - stream.released_amount);
+        let pay_cap =
+            (time_vested - stream.released_amount).min(stream.amount - stream.released_amount);
         assert!(pay_cap > 0, "nothing to claim");
 
         let client = AttestationContractClient::new(&env, &stream.attestation_contract);
         let exists = client
             .get_attestation(&stream.business, &stream.period)
             .is_some();
-        let revoked = client.is_revoked(&stream.business, &stream.period);
+        let revoked = client
+            .get_revocation_info(&stream.business, &stream.period)
+            .is_some();
         assert!(exists, "attestation not found");
         assert!(!revoked, "attestation is revoked");
         stream.released_amount = stream

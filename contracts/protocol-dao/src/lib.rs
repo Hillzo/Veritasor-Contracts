@@ -198,15 +198,29 @@ fn validate_min_votes(min_votes: u32) {
 }
 
 fn validate_proposal_duration(duration: u32) {
-    assert!(
-        duration <= MAX_PROPOSAL_DURATION,
-        "proposal_duration exceeds maximum allowed value"
-    );
+    // MAX_PROPOSAL_DURATION is u32::MAX, so the bound is structural; the
+    // explicit assertion documents intent and remains correct if the constant
+    // is later tightened.
+    #[allow(clippy::absurd_extreme_comparisons)]
+    {
+        assert!(
+            duration <= MAX_PROPOSAL_DURATION,
+            "proposal_duration exceeds maximum allowed value"
+        );
+    }
 }
 
 fn normalize_config(min_votes: u32, duration: u32) -> (u32, u32) {
-    let mv = if min_votes == 0 { DEFAULT_MIN_VOTES } else { min_votes };
-    let dur = if duration == 0 { DEFAULT_PROPOSAL_DURATION } else { duration };
+    let mv = if min_votes == 0 {
+        DEFAULT_MIN_VOTES
+    } else {
+        min_votes
+    };
+    let dur = if duration == 0 {
+        DEFAULT_PROPOSAL_DURATION
+    } else {
+        duration
+    };
     (mv, dur)
 }
 
@@ -249,7 +263,9 @@ fn get_proposal_internal(env: &Env, id: u64) -> Proposal {
 
 fn is_expired(env: &Env, id: u64) -> bool {
     let proposal = get_proposal_internal(env, id);
-    let expiry = proposal.created_at.saturating_add(get_proposal_duration(env));
+    let expiry = proposal
+        .created_at
+        .saturating_add(get_proposal_duration(env));
     env.ledger().sequence() > expiry
 }
 
@@ -258,8 +274,16 @@ fn is_expired(env: &Env, id: u64) -> bool {
 // ════════════════════════════════════════════════════════════════════
 
 fn get_votes(env: &Env, id: u64) -> (u32, u32) {
-    let f: u32 = env.storage().instance().get(&DataKey::VotesFor(id)).unwrap_or(0);
-    let a: u32 = env.storage().instance().get(&DataKey::VotesAgainst(id)).unwrap_or(0);
+    let f: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::VotesFor(id))
+        .unwrap_or(0);
+    let a: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::VotesAgainst(id))
+        .unwrap_or(0);
     (f, a)
 }
 
@@ -278,12 +302,16 @@ fn set_voted(env: &Env, id: u64, voter: &Address) {
 
 fn increment_for(env: &Env, id: u64) {
     let (f, _) = get_votes(env, id);
-    env.storage().instance().set(&DataKey::VotesFor(id), &f.saturating_add(1));
+    env.storage()
+        .instance()
+        .set(&DataKey::VotesFor(id), &f.saturating_add(1));
 }
 
 fn increment_against(env: &Env, id: u64) {
     let (_, a) = get_votes(env, id);
-    env.storage().instance().set(&DataKey::VotesAgainst(id), &a.saturating_add(1));
+    env.storage()
+        .instance()
+        .set(&DataKey::VotesAgainst(id), &a.saturating_add(1));
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -302,7 +330,13 @@ fn has_majority(env: &Env, id: u64) -> bool {
 
 fn get_quorum_status(env: &Env, id: u64) -> (u32, u32, u32, bool, bool) {
     let (f, a) = get_votes(env, id);
-    (f, a, get_min_votes(env), quorum_met(env, id), has_majority(env, id))
+    (
+        f,
+        a,
+        get_min_votes(env),
+        quorum_met(env, id),
+        has_majority(env, id),
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -314,7 +348,9 @@ fn apply_action(env: &Env, action: &ProposalAction) {
         ProposalAction::SetAttestationFeeConfig(token, collector, base_fee, enabled) => {
             let cfg: (Address, Address, i128, bool) =
                 (token.clone(), collector.clone(), *base_fee, *enabled);
-            env.storage().instance().set(&DataKey::AttestationFeeConfig, &cfg);
+            env.storage()
+                .instance()
+                .set(&DataKey::AttestationFeeConfig, &cfg);
         }
         ProposalAction::SetAttestationFeeEnabled(enabled) => {
             let mut cfg: (Address, Address, i128, bool) = env
@@ -323,14 +359,18 @@ fn apply_action(env: &Env, action: &ProposalAction) {
                 .get(&DataKey::AttestationFeeConfig)
                 .expect("attestation fee config not set");
             cfg.3 = *enabled;
-            env.storage().instance().set(&DataKey::AttestationFeeConfig, &cfg);
+            env.storage()
+                .instance()
+                .set(&DataKey::AttestationFeeConfig, &cfg);
         }
         ProposalAction::UpdateGovernanceConfig(min_votes, duration) => {
             validate_min_votes(*min_votes);
             validate_proposal_duration(*duration);
             let (mv, dur) = normalize_config(*min_votes, *duration);
             env.storage().instance().set(&DataKey::MinVotes, &mv);
-            env.storage().instance().set(&DataKey::ProposalDuration, &dur);
+            env.storage()
+                .instance()
+                .set(&DataKey::ProposalDuration, &dur);
         }
     }
 }
@@ -376,7 +416,9 @@ impl ProtocolDao {
         }
         let (mv, dur) = normalize_config(min_votes, proposal_duration);
         env.storage().instance().set(&DataKey::MinVotes, &mv);
-        env.storage().instance().set(&DataKey::ProposalDuration, &dur);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalDuration, &dur);
     }
 
     /// Step 1 of two-step admin transfer.
@@ -394,8 +436,13 @@ impl ProtocolDao {
     /// - `new_admin == current admin`
     pub fn transfer_admin(env: Env, caller: Address, new_admin: Address) {
         require_admin(&env, &caller);
-        assert!(new_admin != get_admin(&env), "new_admin must differ from current admin");
-        env.storage().instance().set(&DataKey::PendingAdmin, &new_admin);
+        assert!(
+            new_admin != get_admin(&env),
+            "new_admin must differ from current admin"
+        );
+        env.storage()
+            .instance()
+            .set(&DataKey::PendingAdmin, &new_admin);
     }
 
     /// Step 2 of two-step admin transfer.
@@ -427,7 +474,9 @@ impl ProtocolDao {
     /// In-flight votes are not affected.
     pub fn set_governance_token(env: Env, caller: Address, token: Address) {
         require_admin(&env, &caller);
-        env.storage().instance().set(&DataKey::GovernanceToken, &token);
+        env.storage()
+            .instance()
+            .set(&DataKey::GovernanceToken, &token);
     }
 
     /// Update quorum parameters.
@@ -442,7 +491,9 @@ impl ProtocolDao {
         validate_proposal_duration(proposal_duration);
         let (mv, dur) = normalize_config(min_votes, proposal_duration);
         env.storage().instance().set(&DataKey::MinVotes, &mv);
-        env.storage().instance().set(&DataKey::ProposalDuration, &dur);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProposalDuration, &dur);
     }
 
     // ── Proposer operations ──────────────────────────────────────────
@@ -467,13 +518,18 @@ impl ProtocolDao {
         assert!(base_fee >= 0, "base_fee must be non-negative");
 
         let id = next_proposal_id(&env);
-        store_proposal(&env, &Proposal {
-            id,
-            creator,
-            action: ProposalAction::SetAttestationFeeConfig(token, collector, base_fee, enabled),
-            status: ProposalStatus::Pending,
-            created_at: env.ledger().sequence(),
-        });
+        store_proposal(
+            &env,
+            &Proposal {
+                id,
+                creator,
+                action: ProposalAction::SetAttestationFeeConfig(
+                    token, collector, base_fee, enabled,
+                ),
+                status: ProposalStatus::Pending,
+                created_at: env.ledger().sequence(),
+            },
+        );
         id
     }
 
@@ -485,13 +541,16 @@ impl ProtocolDao {
         require_token_holder(&env, &creator);
 
         let id = next_proposal_id(&env);
-        store_proposal(&env, &Proposal {
-            id,
-            creator,
-            action: ProposalAction::SetAttestationFeeEnabled(enabled),
-            status: ProposalStatus::Pending,
-            created_at: env.ledger().sequence(),
-        });
+        store_proposal(
+            &env,
+            &Proposal {
+                id,
+                creator,
+                action: ProposalAction::SetAttestationFeeEnabled(enabled),
+                status: ProposalStatus::Pending,
+                created_at: env.ledger().sequence(),
+            },
+        );
         id
     }
 
@@ -515,13 +574,16 @@ impl ProtocolDao {
 
         let (mv, dur) = normalize_config(min_votes, proposal_duration);
         let id = next_proposal_id(&env);
-        store_proposal(&env, &Proposal {
-            id,
-            creator,
-            action: ProposalAction::UpdateGovernanceConfig(mv, dur),
-            status: ProposalStatus::Pending,
-            created_at: env.ledger().sequence(),
-        });
+        store_proposal(
+            &env,
+            &Proposal {
+                id,
+                creator,
+                action: ProposalAction::UpdateGovernanceConfig(mv, dur),
+                status: ProposalStatus::Pending,
+                created_at: env.ledger().sequence(),
+            },
+        );
         id
     }
 
@@ -541,7 +603,10 @@ impl ProtocolDao {
         require_token_holder(&env, &voter);
 
         let proposal = get_proposal_internal(&env, id);
-        assert!(proposal.status == ProposalStatus::Pending, "proposal is not pending");
+        assert!(
+            proposal.status == ProposalStatus::Pending,
+            "proposal is not pending"
+        );
         assert!(!is_expired(&env, id), "proposal expired");
         assert!(!has_voted(&env, id, &voter), "already voted");
 
@@ -564,7 +629,10 @@ impl ProtocolDao {
         require_token_holder(&env, &voter);
 
         let proposal = get_proposal_internal(&env, id);
-        assert!(proposal.status == ProposalStatus::Pending, "proposal is not pending");
+        assert!(
+            proposal.status == ProposalStatus::Pending,
+            "proposal is not pending"
+        );
         assert!(!is_expired(&env, id), "proposal expired");
         assert!(!has_voted(&env, id, &voter), "already voted");
 
@@ -591,7 +659,10 @@ impl ProtocolDao {
         require_executor_auth(&executor);
 
         let mut proposal = get_proposal_internal(&env, id);
-        assert!(proposal.status == ProposalStatus::Pending, "proposal is not pending");
+        assert!(
+            proposal.status == ProposalStatus::Pending,
+            "proposal is not pending"
+        );
         assert!(!is_expired(&env, id), "proposal expired");
         assert!(quorum_met(&env, id), "quorum not met");
         assert!(has_majority(&env, id), "proposal not approved");
@@ -611,7 +682,10 @@ impl ProtocolDao {
     pub fn cancel_proposal(env: Env, caller: Address, id: u64) {
         caller.require_auth();
         let mut proposal = get_proposal_internal(&env, id);
-        assert!(proposal.status == ProposalStatus::Pending, "proposal is not pending");
+        assert!(
+            proposal.status == ProposalStatus::Pending,
+            "proposal is not pending"
+        );
         assert!(
             proposal.creator == caller || get_admin(&env) == caller,
             "only creator or admin can cancel"
@@ -636,7 +710,12 @@ impl ProtocolDao {
 
     /// Returns `(admin, governance_token, min_votes, proposal_duration)`.
     pub fn get_config(env: Env) -> (Address, Option<Address>, u32, u32) {
-        (get_admin(&env), get_governance_token(&env), get_min_votes(&env), get_proposal_duration(&env))
+        (
+            get_admin(&env),
+            get_governance_token(&env),
+            get_min_votes(&env),
+            get_proposal_duration(&env),
+        )
     }
 
     /// Returns `(votes_for, votes_against, min_required, quorum_met, majority_achieved)`.

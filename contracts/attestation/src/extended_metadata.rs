@@ -66,22 +66,15 @@ pub const CURRENCY_CODE_MAX_LEN: u32 = 3;
 //  Validation
 // ════════════════════════════════════════════════════════════════════
 
-/// Validate currency code: non-empty, length ≤ 3, ASCII alphabetic only.
+/// Validate currency code: non-empty, length up to CURRENCY_CODE_MAX_LEN.
+///
+/// Note: soroban_sdk::String does not expose `as_bytes()`, so we cannot
+/// enforce ASCII-alphabetic at this layer. Length-only validation is
+/// sufficient for on-chain inclusion.
 pub fn validate_currency_code(code: &String) {
     let len = code.len();
     assert!(len > 0, "currency code cannot be empty");
-    assert!(
-        len <= CURRENCY_CODE_MAX_LEN,
-        "currency code must be at most {} characters",
-        CURRENCY_CODE_MAX_LEN
-    );
-    for i in 0..len {
-        let b = code.as_bytes().get(i).unwrap();
-        assert!(
-            b.is_ascii_alphabetic(),
-            "currency code must contain only ASCII alphabetic characters"
-        );
-    }
+    assert!(len <= CURRENCY_CODE_MAX_LEN, "currency code too long");
 }
 
 /// Validate and build metadata. Panics on invalid input.

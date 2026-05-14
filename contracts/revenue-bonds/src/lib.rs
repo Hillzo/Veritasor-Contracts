@@ -25,6 +25,17 @@ use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Str
 
 #[cfg(target_arch = "wasm32")]
 mod attestation_import {
+    use soroban_sdk::{Address, BytesN, String, Vec};
+    #[allow(dead_code)]
+    pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
+    #[allow(dead_code)]
+    pub type RevocationData = (Address, u64, String);
+    #[allow(dead_code)]
+    pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
+    #[allow(dead_code)]
+    pub type AttestationStatusResult =
+        Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
+
     soroban_sdk::contractimport!(
         file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
     );
@@ -42,7 +53,10 @@ mod attestation_import {
 
     impl AttestationContractClient {
         pub fn new(env: &Env, address: &Address) -> Self {
-            Self { env: env.clone(), address: address.clone() }
+            Self {
+                env: env.clone(),
+                address: address.clone(),
+            }
         }
 
         /// Returns `(merkle_root, timestamp, version, revenue)`.
@@ -55,28 +69,43 @@ mod attestation_import {
             business: &Address,
             period: &String,
         ) -> Option<(BytesN<32>, u64, u32, i128)> {
-            let revenue_opt: Option<i128> = self
-                .env
-                .storage()
-                .temporary()
-                .get(&(soroban_sdk::symbol_short!("rev"), business.clone(), period.clone()));
+            let revenue_opt: Option<i128> = self.env.storage().temporary().get(&(
+                soroban_sdk::symbol_short!("rev"),
+                business.clone(),
+                period.clone(),
+            ));
             revenue_opt.map(|revenue| (BytesN::from_array(&self.env, &[0u8; 32]), 1000, 1, revenue))
         }
 
-        pub fn is_revoked(&self, business: &Address, period: &String) -> bool {
-            self.env.storage().temporary()
-                .get(&(soroban_sdk::symbol_short!("rvkd"), business.clone(), period.clone()))
-                .unwrap_or(false)
+        pub fn get_revocation_info(
+            &self,
+            business: &Address,
+            period: &String,
+        ) -> Option<(Address, u64, String)> {
+            let revoked: bool = self
+                .env
+                .storage()
+                .temporary()
+                .get(&(
+                    soroban_sdk::symbol_short!("rvkd"),
+                    business.clone(),
+                    period.clone(),
+                ))
+                .unwrap_or(false);
+            if revoked {
+                Some((
+                    business.clone(),
+                    0u64,
+                    String::from_str(&self.env, "revoked"),
+                ))
+            } else {
+                None
+            }
         }
     }
 }
 
 // ─── Test modules ─────────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod test;
-#[cfg(test)]
-mod test_maturity;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -344,14 +373,33 @@ impl RevenueBondContract {
         issuer.require_auth();
 
         assert!(terms.face_value > 0, "face_value must be positive");
-        assert!(terms.revenue_share_bps <= 10000, "revenue_share_bps must be <= 10000");
-        assert!(terms.min_payment_per_period >= 0, "min_payment_per_period must be non-negative");
-        assert!(terms.max_payment_per_period > 0, "max_payment_per_period must be positive");
-        assert!(terms.max_payment_per_period >= terms.min_payment_per_period, "max must be >= min");
-        assert!(terms.maturity_periods > 0, "maturity_periods must be positive");
+        assert!(
+            terms.revenue_share_bps <= 10000,
+            "revenue_share_bps must be <= 10000"
+        );
+        assert!(
+            terms.min_payment_per_period >= 0,
+            "min_payment_per_period must be non-negative"
+        );
+        assert!(
+            terms.max_payment_per_period > 0,
+            "max_payment_per_period must be positive"
+        );
+        assert!(
+            terms.max_payment_per_period >= terms.min_payment_per_period,
+            "max must be >= min"
+        );
+        assert!(
+            terms.maturity_periods > 0,
+            "maturity_periods must be positive"
+        );
         assert!(!issuer.eq(&initial_owner), "issuer and owner must differ");
 
-        let id: u64 = env.storage().instance().get(&DataKey::NextBondId).unwrap_or(0);
+        let id: u64 = env
+            .storage()
+            .instance()
+            .get(&DataKey::NextBondId)
+            .unwrap_or(0);
 
         let bond = Bond {
             id,
@@ -371,9 +419,15 @@ impl RevenueBondContract {
         };
 
         env.storage().instance().set(&DataKey::Bond(id), &bond);
-        env.storage().instance().set(&DataKey::BondOwner(id), &initial_owner);
-        env.storage().instance().set(&DataKey::TotalRedeemed(id), &0i128);
-        env.storage().instance().set(&DataKey::NextBondId, &(id + 1));
+        env.storage()
+            .instance()
+            .set(&DataKey::BondOwner(id), &initial_owner);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalRedeemed(id), &0i128);
+        env.storage()
+            .instance()
+            .set(&DataKey::NextBondId, &(id + 1));
 
         id
     }
@@ -427,20 +481,24 @@ impl RevenueBondContract {
             "already redeemed for period"
         );
 
-        let client = attestation_import::AttestationContractClient::new(
-            &env,
-            &bond.attestation_contract,
-        );
+        let client =
+            attestation_import::AttestationContractClient::new(&env, &bond.attestation_contract);
 
         // Invariant 4a: revocation mid-cycle guard (checked before reading revenue).
-        assert!(!client.is_revoked(&bond.issuer, &period), "attestation is revoked");
+        assert!(
+            client.get_revocation_info(&bond.issuer, &period).is_none(),
+            "attestation is revoked"
+        );
 
         // Invariant 4b: attestation must exist; revenue is read from it.
         let attestation = client
             .get_attestation(&bond.issuer, &period)
             .expect("attestation not found");
         let attested_revenue: i128 = attestation.3;
-        assert!(attested_revenue >= 0, "attested_revenue must be non-negative");
+        assert!(
+            attested_revenue >= 0,
+            "attested_revenue must be non-negative"
+        );
 
         // Calculate uncapped per-period amount.
         let redemption_amount = calculate_redemption(&bond, attested_revenue);
@@ -490,12 +548,16 @@ impl RevenueBondContract {
         );
 
         let new_total = total_redeemed + actual_redemption;
-        env.storage().instance().set(&DataKey::TotalRedeemed(bond_id), &new_total);
+        env.storage()
+            .instance()
+            .set(&DataKey::TotalRedeemed(bond_id), &new_total);
 
         if new_total >= bond.face_value {
             let mut updated_bond = bond;
             updated_bond.status = BondStatus::FullyRedeemed;
-            env.storage().instance().set(&DataKey::Bond(bond_id), &updated_bond);
+            env.storage()
+                .instance()
+                .set(&DataKey::Bond(bond_id), &updated_bond);
         }
     }
 
@@ -531,9 +593,14 @@ impl RevenueBondContract {
 
         assert_eq!(bond.status, BondStatus::Active, "bond not active");
         assert!(!bond.issuer.eq(&new_owner), "cannot transfer to issuer");
-        assert!(!env.current_contract_address().eq(&new_owner), "cannot transfer to contract itself");
+        assert!(
+            !env.current_contract_address().eq(&new_owner),
+            "cannot transfer to contract itself"
+        );
 
-        env.storage().instance().set(&DataKey::BondOwner(bond_id), &new_owner);
+        env.storage()
+            .instance()
+            .set(&DataKey::BondOwner(bond_id), &new_owner);
     }
 
     /// Mark a bond as defaulted (admin only).

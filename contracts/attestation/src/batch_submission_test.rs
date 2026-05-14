@@ -204,8 +204,22 @@ fn test_batch_submit_duplicate_in_batch() {
 
     let mut items = Vec::new(&env);
     // Same business and period
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[2u8; 32], 1_700_000_001, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[2u8; 32],
+        1_700_000_001,
+        1,
+    ));
 
     client.submit_attestations_batch(&items);
 }
@@ -230,7 +244,14 @@ fn test_batch_submit_existing_period() {
 
     // Try to batch submit including the same period
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
 
     client.submit_attestations_batch(&items);
 }
@@ -245,7 +266,14 @@ fn test_batch_submit_when_paused() {
     client.pause(&admin);
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
 
     client.submit_attestations_batch(&items);
 }
@@ -261,9 +289,30 @@ fn test_batch_fees_calculated_correctly() {
     mint(&t.env, &t.token_addr, &business, 10_000_000);
 
     let mut items = Vec::new(&t.env);
-    items.push_back(create_batch_item(&t.env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&t.env, &business, "2026-02", &[2u8; 32], 1_700_008_640, 1));
-    items.push_back(create_batch_item(&t.env, &business, "2026-03", &[3u8; 32], 1_700_017_280, 1));
+    items.push_back(create_batch_item(
+        &t.env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &t.env,
+        &business,
+        "2026-02",
+        &[2u8; 32],
+        1_700_008_640,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &t.env,
+        &business,
+        "2026-03",
+        &[3u8; 32],
+        1_700_017_280,
+        1,
+    ));
 
     let balance_before = balance(&t.env, &t.token_addr, &business);
     t.client.submit_attestations_batch(&items);
@@ -310,8 +359,16 @@ fn test_batch_fees_with_volume_discounts() {
     for i in 1..=9 {
         let period = String::from_str(&t.env, &std::format!("P-{:04}", i));
         let root = BytesN::from_array(&t.env, &[i as u8; 32]);
-        t.client
-            .submit_attestation(&business, &period, &root, &1_700_000_000, &1, &0i128, &None, &None);
+        t.client.submit_attestation(
+            &business,
+            &period,
+            &root,
+            &1_700_000_000,
+            &1,
+            &0i128,
+            &None,
+            &None,
+        );
     }
 
     // Now batch submit 3 more
@@ -596,7 +653,6 @@ fn test_batch_mixed_businesses_and_periods() {
     assert_eq!(client.get_business_count(&business2), 2);
 }
 
-
 // ════════════════════════════════════════════════════════════════════
 //  Failure atomicity tests — Issue #127
 // ════════════════════════════════════════════════════════════════════
@@ -619,17 +675,42 @@ fn test_atomicity_failure_at_first_item_rejects_all() {
     );
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[9u8; 32], 1_700_000_001, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-02", &[2u8; 32], 1_700_008_640, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-03", &[3u8; 32], 1_700_017_280, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[9u8; 32],
+        1_700_000_001,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-02",
+        &[2u8; 32],
+        1_700_008_640,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-03",
+        &[3u8; 32],
+        1_700_017_280,
+        1,
+    ));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items);
     }));
 
     assert!(result.is_err(), "batch must panic on first-item conflict");
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-02")).is_none());
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-03")).is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-02"))
+        .is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .is_none());
     assert_eq!(client.get_business_count(&business), 1);
 }
 
@@ -651,17 +732,42 @@ fn test_atomicity_failure_at_last_item_rejects_all() {
     );
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-02", &[2u8; 32], 1_700_008_640, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-03", &[9u8; 32], 1_700_017_281, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-02",
+        &[2u8; 32],
+        1_700_008_640,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-03",
+        &[9u8; 32],
+        1_700_017_281,
+        1,
+    ));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items);
     }));
 
     assert!(result.is_err(), "batch must panic on last-item conflict");
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-01")).is_none());
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-02")).is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-01"))
+        .is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-02"))
+        .is_none());
     assert_eq!(client.get_business_count(&business), 1);
 }
 
@@ -683,17 +789,42 @@ fn test_atomicity_failure_at_middle_item_rejects_all() {
     );
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-02", &[9u8; 32], 1_700_008_641, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-03", &[3u8; 32], 1_700_017_280, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-02",
+        &[9u8; 32],
+        1_700_008_641,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-03",
+        &[3u8; 32],
+        1_700_017_280,
+        1,
+    ));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items);
     }));
 
     assert!(result.is_err(), "batch must panic on middle-item conflict");
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-01")).is_none());
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-03")).is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-01"))
+        .is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .is_none());
     assert_eq!(client.get_business_count(&business), 1);
 }
 
@@ -718,8 +849,22 @@ fn test_atomicity_business_count_unchanged_on_failure() {
     assert_eq!(client.get_business_count(&business), 3);
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[10u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&env, &business, "2025-01", &[11u8; 32], 1_700_000_001, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[10u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2025-01",
+        &[11u8; 32],
+        1_700_000_001,
+        1,
+    ));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items);
@@ -736,17 +881,42 @@ fn test_atomicity_in_batch_self_duplicate_rejects_all() {
     let business = Address::generate(&env);
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[1u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-02", &[2u8; 32], 1_700_008_640, 1));
-    items.push_back(create_batch_item(&env, &business, "2026-01", &[3u8; 32], 1_700_000_001, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-02",
+        &[2u8; 32],
+        1_700_008_640,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[3u8; 32],
+        1_700_000_001,
+        1,
+    ));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items);
     }));
 
     assert!(result.is_err(), "self-duplicate must reject batch");
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-01")).is_none());
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-02")).is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-01"))
+        .is_none());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-02"))
+        .is_none());
     assert_eq!(client.get_business_count(&business), 0);
 }
 
@@ -769,17 +939,42 @@ fn test_atomicity_cross_business_failure_rejects_all() {
     );
 
     let mut items = Vec::new(&env);
-    items.push_back(create_batch_item(&env, &business1, "2026-01", &[1u8; 32], 1_700_000_000, 1));
-    items.push_back(create_batch_item(&env, &business1, "2026-02", &[5u8; 32], 1_700_008_640, 1));
-    items.push_back(create_batch_item(&env, &business2, "2026-01", &[9u8; 32], 1_700_000_001, 1));
+    items.push_back(create_batch_item(
+        &env,
+        &business1,
+        "2026-01",
+        &[1u8; 32],
+        1_700_000_000,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business1,
+        "2026-02",
+        &[5u8; 32],
+        1_700_008_640,
+        1,
+    ));
+    items.push_back(create_batch_item(
+        &env,
+        &business2,
+        "2026-01",
+        &[9u8; 32],
+        1_700_000_001,
+        1,
+    ));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&items);
     }));
 
     assert!(result.is_err(), "cross-business duplicate must reject all");
-    assert!(client.get_attestation(&business1, &String::from_str(&env, "2026-01")).is_none());
-    assert!(client.get_attestation(&business1, &String::from_str(&env, "2026-02")).is_none());
+    assert!(client
+        .get_attestation(&business1, &String::from_str(&env, "2026-01"))
+        .is_none());
+    assert!(client
+        .get_attestation(&business1, &String::from_str(&env, "2026-02"))
+        .is_none());
     assert_eq!(client.get_business_count(&business1), 0);
     assert_eq!(client.get_business_count(&business2), 1);
 }
@@ -802,19 +997,44 @@ fn test_atomicity_clean_batch_succeeds_after_failed_batch() {
     );
 
     let mut bad_items = Vec::new(&env);
-    bad_items.push_back(create_batch_item(&env, &business, "2026-01", &[9u8; 32], 1_700_000_001, 1));
+    bad_items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-01",
+        &[9u8; 32],
+        1_700_000_001,
+        1,
+    ));
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         client.submit_attestations_batch(&bad_items);
     }));
 
     // Good batch after failure
     let mut good_items = Vec::new(&env);
-    good_items.push_back(create_batch_item(&env, &business, "2026-02", &[2u8; 32], 1_700_008_640, 1));
-    good_items.push_back(create_batch_item(&env, &business, "2026-03", &[3u8; 32], 1_700_017_280, 1));
+    good_items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-02",
+        &[2u8; 32],
+        1_700_008_640,
+        1,
+    ));
+    good_items.push_back(create_batch_item(
+        &env,
+        &business,
+        "2026-03",
+        &[3u8; 32],
+        1_700_017_280,
+        1,
+    ));
 
     client.submit_attestations_batch(&good_items);
 
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-02")).is_some());
-    assert!(client.get_attestation(&business, &String::from_str(&env, "2026-03")).is_some());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-02"))
+        .is_some());
+    assert!(client
+        .get_attestation(&business, &String::from_str(&env, "2026-03"))
+        .is_some());
     assert_eq!(client.get_business_count(&business), 3);
 }

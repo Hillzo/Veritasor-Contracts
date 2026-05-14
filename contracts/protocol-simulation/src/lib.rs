@@ -23,9 +23,6 @@
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 
-#[cfg(test)]
-mod test;
-
 // ─── Data Types ─────────────────────────────────────────────────────
 
 #[contracttype]

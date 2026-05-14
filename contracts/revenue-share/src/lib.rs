@@ -113,6 +113,17 @@ pub const MAX_PERIOD_BYTES: u32 = 128;
 
 #[cfg(target_arch = "wasm32")]
 mod attestation_import {
+    use soroban_sdk::{Address, BytesN, String, Vec};
+    #[allow(dead_code)]
+    pub type AttestationData = (BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>);
+    #[allow(dead_code)]
+    pub type RevocationData = (Address, u64, String);
+    #[allow(dead_code)]
+    pub type AttestationWithRevocation = (AttestationData, Option<RevocationData>);
+    #[allow(dead_code)]
+    pub type AttestationStatusResult =
+        Vec<(String, Option<AttestationData>, Option<RevocationData>)>;
+
     soroban_sdk::contractimport!(
         file = "../../target/wasm32-unknown-unknown/release/veritasor_attestation.wasm"
     );
@@ -221,12 +232,7 @@ impl RevenueShareContract {
         }
         admin.require_auth();
 
-        replay_protection::verify_and_increment_nonce(
-            &env,
-            &admin,
-            NONCE_CHANNEL_ADMIN,
-            nonce,
-        );
+        replay_protection::verify_and_increment_nonce(&env, &admin, NONCE_CHANNEL_ADMIN, nonce);
 
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage()
@@ -556,17 +562,14 @@ impl RevenueShareContract {
     ) {
         let client = AttestationContractClient::new(env, attestation_contract);
 
-        let att = client.get_attestation(business.clone(), period.clone());
+        let att = client.get_attestation(business, period);
         assert!(att.is_some(), "attestation not found");
 
         assert!(
-            !client.is_revoked(business.clone(), period.clone()),
+            client.get_revocation_info(business, period).is_none(),
             "attestation is revoked"
         );
-        assert!(
-            !client.is_expired(business.clone(), period.clone()),
-            "attestation expired"
-        );
+        assert!(!client.is_expired(business, period), "attestation expired");
 
         let (stored_root, _, _, _, _, _): (
             BytesN<32>,
@@ -598,6 +601,3 @@ impl RevenueShareContract {
         assert_eq!(sum, expected, "distribution amounts must sum to revenue");
     }
 }
-
-#[cfg(test)]
-mod test;

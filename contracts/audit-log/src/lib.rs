@@ -12,6 +12,9 @@
 
 #![no_std]
 
+#[cfg(test)]
+extern crate std;
+
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
 use veritasor_common::replay_protection;

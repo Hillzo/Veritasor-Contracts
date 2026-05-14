@@ -256,10 +256,7 @@ pub fn check_rate_limit(env: &Env, business: &Address) {
         set_timestamps(env, business, &active);
     }
 
-    assert!(
-        window_count < config.max_submissions,
-        "rate limit exceeded"
-    );
+    assert!(window_count < config.max_submissions, "rate limit exceeded");
     assert!(
         burst_count < config.burst_max_submissions,
         "burst rate limit exceeded"

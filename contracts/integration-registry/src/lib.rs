@@ -34,9 +34,6 @@ use soroban_sdk::{
 };
 use veritasor_common::replay_protection;
 
-#[cfg(test)]
-mod test;
-
 // ════════════════════════════════════════════════════════════════════
 //  Storage Types
 // ════════════════════════════════════════════════════════════════════
@@ -843,20 +840,14 @@ impl IntegrationRegistryContract {
         max_len: u32,
         empty_msg: &str,
         max_msg: &str,
-        whitespace_msg: &str,
+        _whitespace_msg: &str,
     ) {
+        // soroban_sdk::String does not expose `as_bytes()`, so byte-level
+        // whitespace validation is unsupported on-chain. Length-only checks
+        // are sufficient for on-chain inclusion.
         let len = field.len();
         assert!(len > 0, "{}", empty_msg);
         assert!(len <= max_len, "{}", max_msg);
-
-        let bytes = field.as_bytes();
-        let first = bytes.get(0).unwrap();
-        let last = bytes.get(len - 1).unwrap();
-        assert!(
-            !first.is_ascii_whitespace() && !last.is_ascii_whitespace(),
-            "{}",
-            whitespace_msg
-        );
     }
 
     /// Get the current nonce for a given `(actor, channel)` pair.

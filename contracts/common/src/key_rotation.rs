@@ -585,11 +585,11 @@ pub fn get_last_rotation_ledger(env: &Env) -> u32 {
 pub fn is_in_grace_period(env: &Env, admin: &Address) -> bool {
     let history = get_rotation_history(env);
     let current_seq = env.ledger().sequence();
-    
+
     if history.len() == 0 {
         return false;
     }
-    
+
     for i in (0..history.len()).rev() {
         let record = history.get(i).unwrap();
         if record.old_admin == *admin {

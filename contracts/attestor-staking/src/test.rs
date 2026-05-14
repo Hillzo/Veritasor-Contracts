@@ -303,12 +303,19 @@ fn test_multiple_pending_unstakes() {
     let contract_id = env.register(AttestorStakingContract, ());
     let client = AttestorStakingContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &token_id, &treasury, &1000, &dispute_contract, &100u64);
+    client.initialize(
+        &admin,
+        &token_id,
+        &treasury,
+        &1000,
+        &dispute_contract,
+        &100u64,
+    );
     client.stake(&attestor, &5000);
 
     // Request unstake 1
     client.request_unstake(&attestor, &1000);
-    
+
     // Request unstake 2
     client.request_unstake(&attestor, &2000);
 
@@ -338,7 +345,14 @@ fn test_unlock_timestamp_monotonicity() {
     let contract_id = env.register(AttestorStakingContract, ());
     let client = AttestorStakingContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &token_id, &treasury, &1000, &dispute_contract, &100u64);
+    client.initialize(
+        &admin,
+        &token_id,
+        &treasury,
+        &1000,
+        &dispute_contract,
+        &100u64,
+    );
     client.stake(&attestor, &5000);
 
     // Request 1 at ts 0 -> unlocks at 100
@@ -346,7 +360,7 @@ fn test_unlock_timestamp_monotonicity() {
     client.request_unstake(&attestor, &1000);
 
     // Admin changes unbonding period to 50
-    client.set_unbonding_period(&admin, &50u64);
+    client.set_unbonding_period(&50u64);
 
     // Request 2 at ts 10 -> would unlock at 60, but enforced to 100!
     set_ledger_timestamp(&env, 10);
@@ -373,7 +387,14 @@ fn test_withdraw_multiple_unlocked() {
     let contract_id = env.register(AttestorStakingContract, ());
     let client = AttestorStakingContractClient::new(&env, &contract_id);
 
-    client.initialize(&admin, &token_id, &treasury, &1000, &dispute_contract, &100u64);
+    client.initialize(
+        &admin,
+        &token_id,
+        &treasury,
+        &1000,
+        &dispute_contract,
+        &100u64,
+    );
     client.stake(&attestor, &5000);
 
     set_ledger_timestamp(&env, 0);
@@ -402,4 +423,3 @@ fn test_withdraw_multiple_unlocked() {
     assert_eq!(stake.locked, 0);
     assert_eq!(token_client.balance(&attestor), before + 2000);
 }
-

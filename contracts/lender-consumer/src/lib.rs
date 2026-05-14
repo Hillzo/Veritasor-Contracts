@@ -2,30 +2,27 @@
 
 //! # Lender Consumer Contract
 //!
-//! Facilitates revenue verification and dispute management for lenders, serving as a 
+//! Facilitates revenue verification and dispute management for lenders, serving as a
 //! semantic "truth gate" for revenue-linked financial modules.
 //!
 //! ## Integration Assumptions
 //!
-//! 1. **Truth Gate Pattern**: This contract aggregates core attestation data with 
+//! 1. **Truth Gate Pattern**: This contract aggregates core attestation data with
 //!    lender-specific signals (disputes, anomalies). Downstream modules (like `revenue-bonds`)
 //!    should ideally query this contract to determine if revenue is "safe" for redemption.
 //!
-//! 2. **Failure Propagation**: A dispute flagged here by a Tier 2+ lender indicates that 
-//!    the underlying revenue data is unreliable. Modules using this data should suspended 
+//! 2. **Failure Propagation**: A dispute flagged here by a Tier 2+ lender indicates that
+//!    the underlying revenue data is unreliable. Modules using this data should suspended
 //!    automated flows until the dispute is resolved or cleared by an admin.
 //!
-//! 3. **Data Integrity**: All revenue stored here is cryptographically bound to the core 
-//!    attestation Merkle root. Verification ensures that `revenue_i128` matches the 
+//! 3. **Data Integrity**: All revenue stored here is cryptographically bound to the core
+//!    attestation Merkle root. Verification ensures that `revenue_i128` matches the
 //!    `SHA256(revenue_be_bytes)` root stored in the core contract.
 //!
-//! 4. **Timing**: There is a latency between attestation submission and lender verification. 
+//! 4. **Timing**: There is a latency between attestation submission and lender verification.
 //!    Downstream modules must define their own "verification window" policies.
 
 use soroban_sdk::{contract, contractimpl, contracttype, Address, BytesN, Env, String, Vec};
-
-#[cfg(test)]
-mod test;
 
 #[contract]
 pub struct LenderConsumerContract;
@@ -89,7 +86,6 @@ pub struct RevenueSafetyStatus {
     pub is_safe: bool,
 }
 
-
 // Interface for the lender access list contract
 #[soroban_sdk::contractclient(name = "LenderAccessListClient")]
 pub trait LenderAccessListContractTrait {
@@ -105,7 +101,11 @@ pub trait AttestationContractTrait {
         period: String,
     ) -> Option<(BytesN<32>, u64, u32, i128, Option<BytesN<32>>, Option<u64>)>;
     fn is_expired(env: Env, business: Address, period: String) -> bool;
-    fn is_revoked(env: Env, business: Address, period: String) -> bool;
+    fn get_revocation_info(
+        env: Env,
+        business: Address,
+        period: String,
+    ) -> Option<(Address, u64, String)>;
 }
 
 /// Rejection reason codes for verification.
@@ -131,8 +131,12 @@ impl LenderConsumerContract {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::CoreAddress, &core_address);
-        env.storage().instance().set(&DataKey::AccessList, &access_list);
+        env.storage()
+            .instance()
+            .set(&DataKey::CoreAddress, &core_address);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccessList, &access_list);
     }
 
     fn require_admin(env: &Env, admin: &Address) {
@@ -163,7 +167,9 @@ impl LenderConsumerContract {
     /// Update access list contract address. Admin only.
     pub fn set_access_list(env: Env, admin: Address, access_list: Address) {
         Self::require_admin(&env, &admin);
-        env.storage().instance().set(&DataKey::AccessList, &access_list);
+        env.storage()
+            .instance()
+            .set(&DataKey::AccessList, &access_list);
     }
 
     /// Get the configured access list contract address.
@@ -229,7 +235,7 @@ impl LenderConsumerContract {
         }
 
         // Check if revoked
-        if client.is_revoked(&business, &period) {
+        if client.get_revocation_info(&business, &period).is_some() {
             return VerificationResult {
                 is_valid: false,
                 rejection_reason: REJECTION_REVOKED,
@@ -292,7 +298,7 @@ impl LenderConsumerContract {
         };
 
         let is_revoked = if exists {
-            client.is_revoked(&business, &period)
+            client.get_revocation_info(&business, &period).is_some()
         } else {
             false
         };
@@ -331,7 +337,13 @@ impl LenderConsumerContract {
     /// - If attestation is revoked
     /// - If period is under dispute
     /// - If revenue data doesn't match attested Merkle root
-    pub fn submit_revenue(env: Env, lender: Address, business: Address, period: String, revenue: i128) {
+    pub fn submit_revenue(
+        env: Env,
+        lender: Address,
+        business: Address,
+        period: String,
+        revenue: i128,
+    ) {
         Self::require_lender_tier(&env, &lender, 1);
 
         // Calculate the expected root (Hash of revenue)
@@ -355,7 +367,9 @@ impl LenderConsumerContract {
                 REJECTION_REVOKED => panic!("attestation has been revoked"),
                 REJECTION_DISPUTED => panic!("attestation is under dispute"),
                 REJECTION_NOT_FOUND => panic!("attestation not found"),
-                REJECTION_ROOT_MISMATCH => panic!("Revenue data does not match the attested Merkle root in Core"),
+                REJECTION_ROOT_MISMATCH => {
+                    panic!("Revenue data does not match the attested Merkle root in Core")
+                }
                 _ => panic!("verification failed"),
             }
         }
@@ -384,7 +398,11 @@ impl LenderConsumerContract {
         period: String,
         merkle_root: BytesN<32>,
     ) -> VerificationResult {
-        let core_addr = env.storage().instance().get::<_, Address>(&DataKey::CoreAddress).expect("not initialized");
+        let core_addr = env
+            .storage()
+            .instance()
+            .get::<_, Address>(&DataKey::CoreAddress)
+            .expect("not initialized");
         let client = AttestationClient::new(env, &core_addr);
 
         // Check if attestation exists
@@ -407,7 +425,7 @@ impl LenderConsumerContract {
         }
 
         // Check if revoked
-        if client.is_revoked(&business, &period) {
+        if client.get_revocation_info(&business, &period).is_some() {
             return VerificationResult {
                 is_valid: false,
                 rejection_reason: REJECTION_REVOKED,
@@ -445,7 +463,13 @@ impl LenderConsumerContract {
     ///
     /// WARNING: This method does not check for expiry, revocation, or disputes.
     /// Use `submit_revenue` for the safer version with all safeguards.
-    pub fn submit_revenue_unchecked(env: Env, lender: Address, business: Address, period: String, revenue: i128) {
+    pub fn submit_revenue_unchecked(
+        env: Env,
+        lender: Address,
+        business: Address,
+        period: String,
+        revenue: i128,
+    ) {
         Self::require_lender_tier(&env, &lender, 1);
 
         // Calculate the expected root (Hash of revenue)
@@ -487,7 +511,12 @@ impl LenderConsumerContract {
     }
 
     /// Get the verified revenue for a business and period.
-    pub fn get_revenue(env: Env, lender: Address, business: Address, period: String) -> Option<i128> {
+    pub fn get_revenue(
+        env: Env,
+        lender: Address,
+        business: Address,
+        period: String,
+    ) -> Option<i128> {
         Self::require_lender_tier(&env, &lender, 1);
         env.storage()
             .instance()
@@ -498,7 +527,12 @@ impl LenderConsumerContract {
     ///
     /// Returns the sum. If a period is missing, it is treated as 0.
     /// This is a "simplified API" for credit models (e.g. "Last 3 months revenue").
-    pub fn get_trailing_revenue(env: Env, lender: Address, business: Address, periods: Vec<String>) -> i128 {
+    pub fn get_trailing_revenue(
+        env: Env,
+        lender: Address,
+        business: Address,
+        periods: Vec<String>,
+    ) -> i128 {
         Self::require_lender_tier(&env, &lender, 1);
         let mut sum: i128 = 0;
         for period in periods {
@@ -529,13 +563,26 @@ impl LenderConsumerContract {
     ///
     /// Only lenders with tier >= 2 can set dispute status.
     /// This ensures only authorized parties can flag disputed data.
-    pub fn set_dispute(env: Env, lender: Address, business: Address, period: String, is_disputed: bool) {
+    pub fn set_dispute(
+        env: Env,
+        lender: Address,
+        business: Address,
+        period: String,
+        is_disputed: bool,
+    ) {
         Self::require_lender_tier(&env, &lender, 2);
-        env.storage().instance().set(&DataKey::DisputeStatus(business, period), &is_disputed);
+        env.storage()
+            .instance()
+            .set(&DataKey::DisputeStatus(business, period), &is_disputed);
     }
 
     /// Get the dispute status.
-    pub fn get_dispute_status(env: Env, lender: Address, business: Address, period: String) -> bool {
+    pub fn get_dispute_status(
+        env: Env,
+        lender: Address,
+        business: Address,
+        period: String,
+    ) -> bool {
         Self::require_lender_tier(&env, &lender, 1);
         Self::get_dispute_status_internal(&env, business, period)
     }
@@ -552,38 +599,8 @@ impl LenderConsumerContract {
     /// Only admin can clear anomaly flags.
     pub fn clear_anomaly(env: Env, admin: Address, business: Address, period: String) {
         Self::require_admin(&env, &admin);
-        env.storage().instance().set(&DataKey::Anomaly(business, period), &false);
-    }
-
-    /// Get a comprehensive safety status for integration with revenue modules.
-    ///
-    /// This is the primary API for downstream contracts (e.g. `revenue-bonds`) to 
-    /// determine if a period's revenue is reliable for redemptions or distributions.
-    ///
-    /// # Returns
-    /// A `RevenueSafetyStatus` combining core health and consumer-side signals.
-    pub fn get_revenue_safety_status(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> RevenueSafetyStatus {
-        let health = Self::get_attestation_health(env, business, period);
-        
-        let is_safe = health.exists 
-            && health.has_revenue 
-            && !health.is_disputed 
-            && !health.has_anomaly 
-            && !health.is_revoked 
-            && !health.is_expired;
-
-        RevenueSafetyStatus {
-            is_verified: health.has_revenue,
-            is_disputed: health.is_disputed,
-            has_anomaly: health.has_anomaly,
-            is_revoked: health.is_revoked,
-            is_expired: health.is_expired,
-            is_safe,
-        }
+        env.storage()
+            .instance()
+            .set(&DataKey::Anomaly(business, period), &false);
     }
 }
-

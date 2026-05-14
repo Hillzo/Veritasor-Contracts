@@ -150,8 +150,10 @@ impl AttestationRegistry {
             return true;
         }
 
-        let current_impl: Option<Address> =
-            env.storage().instance().get(&DataKey::CurrentImplementation);
+        let current_impl: Option<Address> = env
+            .storage()
+            .instance()
+            .get(&DataKey::CurrentImplementation);
         if let Some(current) = current_impl {
             if candidate == current {
                 return false; // Same as current — not a real upgrade

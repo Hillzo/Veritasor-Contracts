@@ -22,9 +22,9 @@ const DEFAULT_ANOMALY_ALERT_THRESHOLD: u32 = 70;
 const DEFAULT_ANOMALY_BLOCK_THRESHOLD: u32 = 90;
 const DEFAULT_EXPIRY_SECONDS: u64 = 31_536_000; // 1 year
 const DEFAULT_GRACE_PERIOD_SECONDS: u64 = 2_592_000; // 30 days
-// ════════════════════════════════════════════════════════════════════
-//  Storage Keys
-// ════════════════════════════════════════════════════════════════════
+                                                     // ════════════════════════════════════════════════════════════════════
+                                                     //  Storage Keys
+                                                     // ════════════════════════════════════════════════════════════════════
 
 #[contracttype]
 #[derive(Clone)]
@@ -575,8 +575,7 @@ impl BusinessConfigContract {
             .instance()
             .set(&ConfigKey::AnchorConfig(business.clone()), &merged);
 
-        env.events()
-            .publish((TOPIC_ANCHOR_SET, business), merged);
+        env.events().publish((TOPIC_ANCHOR_SET, business), merged);
     }
 
     /// Get the anchor configuration for a business.

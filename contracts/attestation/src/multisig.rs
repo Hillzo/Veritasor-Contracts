@@ -5,6 +5,9 @@
 
 use soroban_sdk::{contracttype, Address, Env, Vec};
 
+/// Default proposal expiry, expressed in ledger sequences after creation.
+pub const DEFAULT_PROPOSAL_EXPIRY: u32 = 100_000;
+
 // ════════════════════════════════════════════════════════════════════
 //  Storage Types
 // ════════════════════════════════════════════════════════════════════
@@ -23,6 +26,8 @@ pub enum MultisigKey {
     Approvals(u64),
     /// Next proposal ID counter
     NextProposalId,
+    /// Expiry ledger for a proposal
+    ProposalExpiry(u64),
 }
 
 /// Types of actions that can be proposed
@@ -44,7 +49,7 @@ pub enum ProposalAction {
     /// Revoke a role from an address
     RevokeRole(Address, u32),
     /// Update fee configuration: (token, collector, base_fee, enabled)
-    UpdateFeeConfig(Address, Address, i128, bool), 
+    UpdateFeeConfig(Address, Address, i128, bool),
     /// Emergency admin key rotation (bypasses timelock)
     EmergencyRotateAdmin(Address), // new_admin
 }
@@ -59,6 +64,8 @@ pub enum ProposalStatus {
     Executed,
     /// Proposal was rejected
     Rejected,
+    /// Proposal expired before execution
+    Expired,
 }
 
 /// Full proposal data
@@ -73,6 +80,8 @@ pub struct Proposal {
     pub proposer: Address,
     /// Current status
     pub status: ProposalStatus,
+    /// Ledger sequence at which this proposal was created
+    pub created_at: u32,
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -180,7 +189,11 @@ pub fn get_approvals(env: &Env, id: u64) -> Vec<Address> {
 }
 
 pub fn is_proposal_expired(env: &Env, id: u64) -> bool {
-    if let Some(expiry) = env.storage().instance().get::<_, u32>(&MultisigKey::ProposalExpiry(id)) {
+    if let Some(expiry) = env
+        .storage()
+        .instance()
+        .get::<_, u32>(&MultisigKey::ProposalExpiry(id))
+    {
         return env.ledger().sequence() > expiry;
     }
     false
@@ -189,10 +202,12 @@ pub fn is_proposal_expired(env: &Env, id: u64) -> bool {
 pub fn approve_proposal(env: &Env, approver: &Address, id: u64) {
     approver.require_auth();
     let mut proposal = get_proposal(env, id).expect("proposal not found");
-    
+
     if is_proposal_expired(env, id) {
         proposal.status = ProposalStatus::Expired;
-        env.storage().instance().set(&MultisigKey::Proposal(id), &proposal);
+        env.storage()
+            .instance()
+            .set(&MultisigKey::Proposal(id), &proposal);
         panic!("proposal has expired");
     }
 
@@ -234,10 +249,12 @@ pub fn get_approval_count(env: &Env, id: u64) -> u32 {
 
 pub fn mark_executed(env: &Env, id: u64) {
     let mut proposal = get_proposal(env, id).expect("proposal not found");
-    
+
     if is_proposal_expired(env, id) {
         proposal.status = ProposalStatus::Expired;
-        env.storage().instance().set(&MultisigKey::Proposal(id), &proposal);
+        env.storage()
+            .instance()
+            .set(&MultisigKey::Proposal(id), &proposal);
         panic!("proposal has expired");
     }
 
@@ -250,11 +267,6 @@ pub fn mark_executed(env: &Env, id: u64) {
     env.storage()
         .instance()
         .set(&MultisigKey::Proposal(id), &proposal);
-}
-
-/// Check if multisig is initialized.
-pub fn is_multisig_initialized(env: &Env) -> bool {
-    env.storage().instance().has(&MultisigKey::Owners)
 }
 
 pub fn require_owner(env: &Env, caller: &Address) {
