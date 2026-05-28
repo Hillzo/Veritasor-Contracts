@@ -1039,7 +1039,7 @@ impl AttestationContract {
 #[cfg(test)]
 mod batch_submission_test;
 #[cfg(test)]
-mod extend_expiry_test;
+mod tier_bounds_test;
 #[cfg(test)]
 mod test;
 #[cfg(test)]
