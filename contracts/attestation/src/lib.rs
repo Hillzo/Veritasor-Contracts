@@ -236,10 +236,10 @@ impl AttestationContract {
         access_control::require_not_paused(&env);
         business.require_auth();
 
-        // Enforce period validation check
-        Self::validate_period(&period);
+        if registry::get_status(&env, &business) == Some(BusinessStatus::Suspended) {
+            panic!("business is suspended");
+        }
 
-        // Keep the main branch rate limit check intact
         rate_limit::check_rate_limit(&env, &business);
 
         let key = DataKey::Attestation(business.clone(), period.clone());
@@ -306,6 +306,10 @@ impl AttestationContract {
             if !already_authed {
                 item.business.require_auth();
                 authed_businesses.push_back(item.business.clone());
+            }
+
+            if registry::get_status(&env, &item.business) == Some(BusinessStatus::Suspended) {
+                panic!("business is suspended");
             }
 
             let pair = (item.business.clone(), item.period.clone());
@@ -1151,3 +1155,5 @@ mod test;
 mod tier_bounds_test;
 #[cfg(test)]
 mod verify_attestation_test;
+#[cfg(test)]
+mod registry_test;
