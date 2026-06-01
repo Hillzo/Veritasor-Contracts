@@ -202,6 +202,113 @@ fn test_volume_brackets() {
 }
 
 #[test]
+fn test_volume_bracket_selection_across_threshold_boundaries() {
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 2u64, 5u64, 9u64];
+    let discounts = vec![&t.env, 250u32, 1_000u32, 2_500u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 100_000_000);
+
+    assert_eq!(t.client.get_volume_discount(&business), 0);
+    assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+
+    submit(&t.client, &t.env, &business, 1);
+    assert_eq!(t.client.get_business_count(&business), 1);
+    assert_eq!(t.client.get_volume_discount(&business), 0);
+    assert_eq!(t.client.get_fee_quote(&business), 1_000_000);
+
+    submit(&t.client, &t.env, &business, 2);
+    assert_eq!(t.client.get_business_count(&business), 2);
+    assert_eq!(t.client.get_volume_discount(&business), 250);
+    assert_eq!(t.client.get_fee_quote(&business), 975_000);
+
+    submit(&t.client, &t.env, &business, 3);
+    submit(&t.client, &t.env, &business, 4);
+    assert_eq!(t.client.get_business_count(&business), 4);
+    assert_eq!(t.client.get_volume_discount(&business), 250);
+    assert_eq!(t.client.get_fee_quote(&business), 975_000);
+
+    submit(&t.client, &t.env, &business, 5);
+    assert_eq!(t.client.get_business_count(&business), 5);
+    assert_eq!(t.client.get_volume_discount(&business), 1_000);
+    assert_eq!(t.client.get_fee_quote(&business), 900_000);
+
+    submit(&t.client, &t.env, &business, 6);
+    submit(&t.client, &t.env, &business, 7);
+    submit(&t.client, &t.env, &business, 8);
+    assert_eq!(t.client.get_business_count(&business), 8);
+    assert_eq!(t.client.get_volume_discount(&business), 1_000);
+    assert_eq!(t.client.get_fee_quote(&business), 900_000);
+
+    submit(&t.client, &t.env, &business, 9);
+    assert_eq!(t.client.get_business_count(&business), 9);
+    assert_eq!(t.client.get_volume_discount(&business), 2_500);
+    assert_eq!(t.client.get_fee_quote(&business), 750_000);
+
+    submit(&t.client, &t.env, &business, 10);
+    assert_eq!(t.client.get_business_count(&business), 10);
+    assert_eq!(t.client.get_volume_discount(&business), 2_500);
+    assert_eq!(t.client.get_fee_quote(&business), 750_000);
+}
+
+#[test]
+fn test_get_volume_discount_empty_brackets_returns_zero() {
+    let t = setup_with_fees(1_000_000);
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 10_000_000);
+
+    assert_eq!(t.client.get_volume_discount(&business), 0);
+
+    submit(&t.client, &t.env, &business, 1);
+    assert_eq!(t.client.get_business_count(&business), 1);
+    assert_eq!(t.client.get_volume_discount(&business), 0);
+}
+
+#[test]
+fn test_get_volume_discount_single_bracket_boundaries() {
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 3u64];
+    let discounts = vec![&t.env, 750u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 10_000_000);
+
+    submit(&t.client, &t.env, &business, 1);
+    submit(&t.client, &t.env, &business, 2);
+    assert_eq!(t.client.get_business_count(&business), 2);
+    assert_eq!(t.client.get_volume_discount(&business), 0);
+
+    submit(&t.client, &t.env, &business, 3);
+    assert_eq!(t.client.get_business_count(&business), 3);
+    assert_eq!(t.client.get_volume_discount(&business), 750);
+
+    submit(&t.client, &t.env, &business, 4);
+    assert_eq!(t.client.get_business_count(&business), 4);
+    assert_eq!(t.client.get_volume_discount(&business), 750);
+}
+
+#[test]
+fn test_get_volume_discount_between_brackets_uses_highest_eligible_threshold() {
+    let t = setup_with_fees(1_000_000);
+    let thresholds = vec![&t.env, 2u64, 4u64, 6u64];
+    let discounts = vec![&t.env, 100u32, 400u32, 900u32];
+    t.client.set_volume_brackets(&thresholds, &discounts);
+
+    let business = Address::generate(&t.env);
+    mint(&t.env, &t.token_addr, &business, 10_000_000);
+
+    for i in 1..=5 {
+        submit(&t.client, &t.env, &business, i);
+    }
+
+    assert_eq!(t.client.get_business_count(&business), 5);
+    assert_eq!(t.client.get_volume_discount(&business), 400);
+}
+
+#[test]
 fn test_combined_tier_and_volume_discounts() {
     let t = setup_with_fees(1_000_000);
     t.client.set_tier_discount(&1, &2_000);

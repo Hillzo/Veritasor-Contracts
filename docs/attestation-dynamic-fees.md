@@ -84,6 +84,8 @@ This means:
 
 Brackets are evaluated highest-threshold-first. The cumulative attestation count for a business is tracked on-chain and incremented on each successful submission.
 
+`get_volume_discount(business)` returns the volume discount, in basis points, for the business's current cumulative attestation count. It uses the same bracket-selection logic as `get_fee_quote(business)`, so clients can show the current volume tier alongside fee previews without recomputing bracket state off-chain.
+
 ## Fee Quote Breakdown
 
 `get_fee_quote_detailed(business)` returns a 5-tuple:
@@ -139,6 +141,7 @@ One-time setup. Must be called before any admin method. The `admin` address must
 | `get_fee_config()`             | Current fee configuration or None                   |
 | `get_fee_quote(business)`      | Fee the business would pay for its next attestation |
 | `get_fee_quote_detailed(business)` | Itemized fee breakdown (see below)              |
+| `get_volume_discount(business)` | Current volume discount in basis points for the business |
 | `get_business_tier(business)`  | Tier assigned to a business (0 if unset)            |
 | `get_business_count(business)` | Cumulative attestation count                        |
 | `get_admin()`                  | Contract admin address                              |
