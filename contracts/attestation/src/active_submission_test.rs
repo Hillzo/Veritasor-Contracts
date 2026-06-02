@@ -157,9 +157,7 @@ fn test_submit_attestation_accepts_active_business() {
         &None,
         &None,
     );
-    let stored = client
-        .get_attestation(&business, &period)
-        .expect("expected attestation");
+    let stored = client.get_attestation(&business, &period).expect("expected attestation");
     assert_eq!(stored.0, root);
 }
 
