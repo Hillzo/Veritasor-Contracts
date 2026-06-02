@@ -485,6 +485,7 @@ impl AttestationContract {
                 item.proof_hash.clone(),
                 item.expiry_timestamp,
             );
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             env.storage().instance().set(&key, &data);
 
             events::emit_attestation_submitted(
@@ -881,7 +882,6 @@ impl AttestationContract {
 
         events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
-
 
     pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
@@ -1346,12 +1346,12 @@ impl AttestationContract {
             current_cursor += 1;
 
             if let Some(ref start) = period_start {
-                if compare_strings(&period, start) == Ordering::Less {
+                if period.partial_cmp(start) == Some(Ordering::Less) {
                     continue;
                 }
             }
             if let Some(ref end) = period_end {
-                if compare_strings(&period, end) == Ordering::Greater {
+                if period.partial_cmp(end) == Some(Ordering::Greater) {
                     continue;
                 }
             }
