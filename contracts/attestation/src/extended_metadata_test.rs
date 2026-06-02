@@ -358,7 +358,9 @@ fn test_metadata_removed_on_revocation() {
         &0u64,
     );
 
-    assert!(client.get_attestation_metadata(&business, &period).is_some());
+    assert!(client
+        .get_attestation_metadata(&business, &period)
+        .is_some());
 
     client.revoke_attestation(
         &admin,
@@ -368,6 +370,8 @@ fn test_metadata_removed_on_revocation() {
         &0u64,
     );
 
-    assert!(client.get_attestation_metadata(&business, &period).is_none());
+    assert!(client
+        .get_attestation_metadata(&business, &period)
+        .is_none());
 }
 

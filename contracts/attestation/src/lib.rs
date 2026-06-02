@@ -176,6 +176,10 @@ impl AttestationContract {
         dynamic_fees::set_business_tier(&env, &business, tier);
     }
 
+    pub fn get_business_tier(env: Env, business: Address) -> u32 {
+        dynamic_fees::get_business_tier(&env, &business)
+    }
+
     pub fn set_volume_brackets(env: Env, thresholds: Vec<u64>, discounts: Vec<u32>) {
         dynamic_fees::require_admin(&env);
         dynamic_fees::set_volume_brackets(&env, &thresholds, &discounts);
@@ -350,11 +354,7 @@ impl AttestationContract {
         Self::execute_batch_submission(&env, None, &items);
     }
 
-    pub fn submit_batch_as_attestor(
-        env: Env,
-        attestor: Address,
-        items: Vec<BatchAttestationItem>,
-    ) {
+    pub fn submit_batch_as_attestor(env: Env, attestor: Address, items: Vec<BatchAttestationItem>) {
         access_control::require_attestor(&env, &attestor);
 
         let staking_addr = Self::get_attestor_staking_contract(env.clone())
@@ -476,12 +476,13 @@ impl AttestationContract {
 
             dynamic_fees::increment_business_count(env, &item.business);
 
+            let key = DataKey::Attestation(item.business.clone(), item.period.clone());
             let data: AttestationData = (
                 item.merkle_root.clone(),
                 item.timestamp,
                 item.version,
-                fee,
-                proof_hash.clone(),
+                total_fee,
+                item.proof_hash.clone(),
                 item.expiry_timestamp,
             );
             env.storage().instance().set(&key, &data);
@@ -493,8 +494,8 @@ impl AttestationContract {
                 &item.merkle_root,
                 item.timestamp,
                 item.version,
-                fee,
-                &proof_hash,
+                total_fee,
+                &item.proof_hash,
                 item.expiry_timestamp,
             );
 
@@ -502,11 +503,7 @@ impl AttestationContract {
         }
     }
 
-    pub fn get_attestation(
-        env: Env,
-        business: Address,
-        period: String,
-    ) -> Option<AttestationData> {
+    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
         let key = DataKey::Attestation(business, period);
         env.storage().instance().get(&key)
     }
@@ -530,9 +527,12 @@ impl AttestationContract {
         period: String,
     ) {
         caller.require_auth();
-        let caller_is_admin = *caller == dynamic_fees::get_admin(&env)
+        let caller_is_admin = caller == dynamic_fees::get_admin(&env)
             || access_control::has_role(&env, &caller, ROLE_ADMIN);
-        assert!(caller_is_admin || caller == business, "caller must be ADMIN or the business owner");
+        assert!(
+            caller_is_admin || caller == business,
+            "caller must be ADMIN or the business owner"
+        );
 
         let key = DataKey::Attestation(business.clone(), period.clone());
         let attestation: AttestationData = env
@@ -882,11 +882,6 @@ impl AttestationContract {
         events::emit_attestation_expiry_extended(&env, &business, &period, old_expiry, new_expiry);
     }
 
-    pub fn get_attestation(env: Env, business: Address, period: String) -> Option<AttestationData> {
-        let key = DataKey::Attestation(business, period);
-        env.storage().instance().get(&key)
-    }
-
     pub fn get_proof_hash(env: Env, business: Address, period: String) -> Option<BytesN<32>> {
         Self::get_attestation(env, business, period).and_then(|data| data.4)
     }
@@ -985,7 +980,7 @@ impl AttestationContract {
 
     pub fn revoke_multi_period_attestation(env: Env, business: Address, merkle_root: BytesN<32>) {
         business.require_auth();
-        
+
         // O(1) lookup via index instead of O(n) linear scan
         let index_key = MultiPeriodKey::RootIndex(business.clone(), merkle_root.clone());
         let range_index: u32 = env
@@ -1138,8 +1133,8 @@ impl AttestationContract {
 
     pub fn cancel_key_rotation(env: Env) {
         let admin = dynamic_fees::require_admin(&env);
-    admin.require_auth();
-    veritasor_common::key_rotation::cancel_rotation(&env, &admin);
+        admin.require_auth();
+        veritasor_common::key_rotation::cancel_rotation(&env, &admin);
     }
 
     pub fn has_pending_key_rotation(env: Env) -> bool {
@@ -1388,6 +1383,115 @@ impl AttestationContract {
         (results, current_cursor)
     }
 
+    pub fn initialize_multisig(env: Env, owners: Vec<Address>, threshold: u32, _nonce: u64) {
+        multisig::initialize_multisig(&env, &owners, threshold);
+    }
+
+    pub fn get_multisig_owners(env: Env) -> Vec<Address> {
+        multisig::get_owners(&env)
+    }
+
+    pub fn get_multisig_threshold(env: Env) -> u32 {
+        multisig::get_threshold(&env)
+    }
+
+    pub fn is_multisig_owner(env: Env, address: Address) -> bool {
+        multisig::is_owner(&env, &address)
+    }
+
+    pub fn create_proposal(
+        env: Env,
+        proposer: Address,
+        action: ProposalAction,
+        _nonce: u64,
+    ) -> u64 {
+        multisig::create_proposal(&env, &proposer, action)
+    }
+
+    pub fn get_proposal(env: Env, id: u64) -> Option<Proposal> {
+        multisig::get_proposal(&env, id)
+    }
+
+    pub fn approve_proposal(env: Env, approver: Address, id: u64, _nonce: u64) {
+        multisig::approve_proposal(&env, &approver, id)
+    }
+
+    pub fn reject_proposal(env: Env, rejecter: Address, id: u64, _nonce: u64) {
+        multisig::reject_proposal(&env, &rejecter, id)
+    }
+
+    pub fn execute_proposal(env: Env, executor: Address, proposal_id: u64, _nonce: u64) {
+        multisig::require_owner(&env, &executor);
+        let proposal = multisig::get_proposal(&env, proposal_id).expect("proposal not found");
+        multisig::mark_executed(&env, proposal_id);
+
+        match proposal.action {
+            ProposalAction::Pause => {
+                access_control::set_paused(&env, true);
+                events::emit_paused(&env, &executor);
+            }
+            ProposalAction::Unpause => {
+                access_control::set_paused(&env, false);
+                events::emit_unpaused(&env, &executor);
+            }
+            ProposalAction::AddOwner(new_owner) => {
+                let mut owners = multisig::get_owners(&env);
+                if !owners.contains(&new_owner) {
+                    owners.push_back(new_owner);
+                    multisig::set_owners(&env, &owners);
+                }
+            }
+            ProposalAction::RemoveOwner(owner_to_remove) => {
+                let mut owners = multisig::get_owners(&env);
+                if let Some(index) = owners.first_index_of(&owner_to_remove) {
+                    owners.remove(index);
+                    multisig::set_owners(&env, &owners);
+                }
+            }
+            ProposalAction::ChangeThreshold(new_threshold) => {
+                let owners_len = multisig::get_owners(&env).len();
+                assert!(
+                    new_threshold > 0 && new_threshold <= owners_len,
+                    "invalid threshold"
+                );
+                env.storage()
+                    .instance()
+                    .set(&multisig::MultisigKey::Threshold, &new_threshold);
+            }
+            ProposalAction::GrantRole(account, role) => {
+                access_control::grant_role(&env, &account, role, &executor);
+                events::emit_role_granted(&env, &account, role, &executor);
+            }
+            ProposalAction::RevokeRole(account, role) => {
+                access_control::revoke_role(&env, &account, role, &executor);
+                events::emit_role_revoked(&env, &account, role, &executor);
+            }
+            ProposalAction::UpdateFeeConfig(token, collector, base_fee, enabled) => {
+                let config = dynamic_fees::FeeConfig {
+                    token,
+                    collector,
+                    base_fee,
+                    enabled,
+                };
+                dynamic_fees::set_fee_config(&env, &config);
+            }
+            ProposalAction::EmergencyRotateAdmin(new_admin) => {
+                dynamic_fees::set_admin(&env, &new_admin);
+                access_control::grant_role(
+                    &env,
+                    &new_admin,
+                    access_control::ROLE_ADMIN,
+                    &new_admin,
+                );
+            }
+        }
+    }
+
+    pub fn clear_anomaly_escalation(env: Env, caller: Address, business: Address) {
+        access_control::require_admin(&env, &caller);
+        dispute::clear_anomaly_escalation(&env, &business);
+    }
+
     // ── Internal Helpers ──────────────────────────────────────────────
 
     /// REQUIREMENT: Rejects empty or malformed strings to avoid permanent unvalidated storage poisoning.
@@ -1491,6 +1595,8 @@ mod rate_limit_test;
 #[cfg(test)]
 mod registry_test;
 #[cfg(test)]
+mod replay_nonce_test;
+#[cfg(test)]
 mod revocation_test;
 #[cfg(test)]
 mod test;
@@ -1503,5 +1609,6 @@ mod verify_attestation_test;
 #[cfg(test)]
 mod verify_attestations_batch_test;
 
-
-
+fn compare_strings(a: &String, b: &String) -> Ordering {
+    a.cmp(b)
+}
